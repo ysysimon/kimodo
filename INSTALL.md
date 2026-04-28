@@ -107,6 +107,32 @@ uv run python -m kimodo.scripts.generate --help
 uv run python kimodo/scripts/lock_requirements.py
 ```
 
+## 本地 text encoder 环境变量
+
+如果无法直接访问 Hugging Face 上的 gated `meta-llama/Meta-Llama-3-8B-Instruct`，可以先从其他来源下载兼容的 Llama base model 到本地目录，然后通过 `LLM2VEC_BASE_MODEL_PATH` 指定给 Kimodo 的 LLM2Vec text encoder 使用。
+
+示例：
+
+```powershell
+$env:HF_HOME="D:\AI_cache\hf_cache"
+$env:LLM2VEC_BASE_MODEL_PATH="D:\AI_cache\Meta-Llama-3-8B-Instruct"
+uv run --no-sync kimodo_textencoder
+```
+
+`LLM2VEC_BASE_MODEL_PATH` 只覆盖 LLM2Vec 的 base model 路径；PEFT adapter 仍按 Hugging Face cache 或 `TEXT_ENCODERS_DIR` 查找。如果希望降低显存占用，可以额外设置：
+
+```powershell
+$env:TEXT_ENCODER_DEVICE="cpu"
+```
+
+仓库提供了模板脚本：
+
+```powershell
+scripts/start_text_encoder.template.ps1
+```
+
+可以复制为本地脚本 `scripts/start_text_encoder.ps1` 并填写本机路径；真实脚本已加入 `.gitignore`，不会被提交。
+
 重新生成 uv 锁文件:
 
 ```powershell
