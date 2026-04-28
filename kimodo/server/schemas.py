@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from kimodo import DEFAULT_MODEL
 
@@ -21,14 +21,25 @@ class JobStatus(str, Enum):
 
 @dataclass
 class GenerationRequest:
+    """Request for one Kimodo generation job.
+
+    ``texts`` and ``durations`` are per-segment fields and must have matching
+    lengths. All other fields are global settings for the whole job.
+    """
+
     texts: list[str]
     durations: list[float]
     model: str = DEFAULT_MODEL
-    diffusion_steps: int = 50
+    diffusion_steps: int = 100
     num_samples: int = 1
     seed: int | None = None
+    cfg_type: Literal["nocfg", "regular", "separated"] | None = None
+    cfg_weight: float | list[float] | None = None
+    num_transition_frames: int = 5
+    first_heading_angle: float | list[float] | None = None
     formats: list[str] = field(default_factory=lambda: ["npz"])
     postprocess: bool = True
+    root_margin: float = 0.04
     constraints: Any | None = None
     job_id: str | None = None
 
