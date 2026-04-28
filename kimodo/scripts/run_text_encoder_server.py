@@ -163,7 +163,12 @@ def main():
         )
         clear.click(fn=clear_fn, inputs=None, outputs=outputs)
 
-    demo.launch(server_name=server_name, server_port=server_port)
+    demo.launch(
+        server_name=server_name,
+        server_port=server_port,
+        show_error=True,
+        allowed_paths=[args.tmp_folder],
+    )
 
 
 if __name__ == "__main__":

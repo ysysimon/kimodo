@@ -26,8 +26,13 @@ class LLM2VecEncoder:
 
         cache_dir = os.environ.get("HUGGINGFACE_CACHE_DIR")
 
-        if "TEXT_ENCODERS_DIR" in os.environ:
+        base_model_override = os.environ.get("LLM2VEC_BASE_MODEL_PATH")
+        if base_model_override:
+            base_model_name_or_path = base_model_override
+        elif "TEXT_ENCODERS_DIR" in os.environ:
             base_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], base_model_name_or_path)
+
+        if "TEXT_ENCODERS_DIR" in os.environ:
             peft_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], peft_model_name_or_path)
 
         self.model = LLM2Vec.from_pretrained(

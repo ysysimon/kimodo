@@ -147,6 +147,9 @@ outputs
 checkpoints/**/test/*
 nohup.out
 
+# scripts
+scripts/start_text_encoder.ps1
+
 *.swp
 *.swo
 *.txt~*
