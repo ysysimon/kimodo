@@ -12,13 +12,14 @@ name = "kimodo"
 version = "1.0.0"
 description = "Kimodo motion generation model"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = {text = "Apache-2.0"}
 dependencies = [
   "hydra-core>=1.3",
   "omegaconf>=2.3",
   "numpy>=1.23",
   "scipy>=1.10",
+  "torch",
   "transformers==5.1.0",
   "urllib3>=2.6.3",
   "boto3",
@@ -69,6 +70,16 @@ docs = [
   "sphinx-design",
 ]
 
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
 [project.scripts]
 kimodo_gen = "kimodo.scripts.generate:main"
 kimodo_demo = "kimodo.demo:main"
@@ -81,6 +92,17 @@ zip-safe = false
 
 [tool.setuptools.package-data]
 kimodo = ["assets/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+  ".git",
+  ".ruff_cache",
+  ".uv-cache",
+  ".venv",
+  "outputs",
+  "pytest-cache-files-*",
+]
 
 [tool.flake8]
 max-line-length = 120

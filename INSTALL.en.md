@@ -9,11 +9,11 @@ This document records the recommended uv-based installation flow for this fork. 
 - Use uv to manage the virtual environment, dependency synchronization, lockfile, and command execution.
 - Keep `setup.py` responsible for building the `MotionCorrection` CMake/C++ extension.
 - Leave the Docker dependency locking flow unchanged: continue using `docker_requirements.in`, `docker_requirements.txt`, and `kimodo/scripts/lock_requirements.py`.
-- Install PyTorch separately for your CUDA/CPU environment to avoid uv/pip selecting an unsuitable wheel automatically.
+- PyTorch is managed by uv. Windows/Linux use the PyTorch CUDA 13.0 wheel by default; macOS falls back to the PyPI wheel.
 
 ## Requirements
 
-- Python 3.10 or newer
+- Python 3.10 through 3.13. This project does not use Python 3.14+ yet because some PyTorch JIT paths still emit compatibility warnings on 3.14+.
 - uv
 - CMake 3.15 or newer
 - A C++17 compiler
@@ -27,26 +27,36 @@ The `MotionCorrection` C++ extension itself is not a CUDA extension. Building it
 Windows PowerShell:
 
 ```powershell
-uv venv --python 3.10
+uv venv --python 3.13
 .\.venv\Scripts\activate
 ```
 
 Linux/macOS:
 
 ```bash
-uv venv --python 3.10
+uv venv --python 3.13
 source .venv/bin/activate
 ```
 
-## Install PyTorch
+## PyTorch version
 
-CUDA 12.4 example:
+This fork declares `torch` directly in `pyproject.toml` and uses uv sources to control where PyTorch is resolved from:
+
+- Windows/Linux: `https://download.pytorch.org/whl/cu130`
+- macOS: the default PyPI wheel
+
+In normal installs you do not need to run `uv pip install torch ...` manually. `uv sync` installs the PyTorch version locked in `uv.lock` for the current platform. Verify it with:
 
 ```powershell
-uv pip install torch --index-url https://download.pytorch.org/whl/cu124
+uv run python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
 ```
 
-For CPU-only or other CUDA versions, replace the command above with the official PyTorch installation command for your machine. PyTorch is not added as a special uv dependency group here so different machines can keep the correct CUDA/CPU wheel.
+If you specifically need CPU-only PyTorch or a different CUDA version, skip the project-locked torch package and then install the desired wheel manually:
+
+```powershell
+uv sync --extra all --group dev --group docs --no-install-package torch
+uv pip install torch --index-url <your-pytorch-index-url>
+```
 
 ## Sync project dependencies
 
@@ -62,7 +72,7 @@ If you already installed PyTorch manually for your local CUDA version and want t
 uv sync --extra all --group dev --group docs --no-install-package torch
 ```
 
-Although `torch` is not configured as a special direct dependency in this project, it can enter the resolved dependency graph through packages such as `peft` and `transformers`. `--no-install-package torch` keeps your manually installed CUDA/CPU PyTorch version in place.
+`torch` is now a direct project dependency. `--no-install-package torch` keeps your manually installed CUDA/CPU PyTorch version in place, but normal development should let uv manage PyTorch from the lockfile.
 
 The commands above install the current project and trigger the `MotionCorrection` CMake build through this chain:
 
@@ -150,7 +160,7 @@ uv run kimodo_gen --help
 
 ## Troubleshooting
 
-If `uv lock` or `uv sync` reports an incompatible Python version, confirm that the current environment is using Python 3.10 or newer.
+If `uv lock` or `uv sync` reports an incompatible Python version, confirm that the current environment is using Python 3.10 through 3.13.
 
 If `uv sync` fails while building `MotionCorrection`, check:
 
@@ -159,4 +169,4 @@ If `uv sync` fails while building `MotionCorrection`, check:
 - On Windows, Visual Studio Build Tools is installed, or `g++` is available on `PATH`.
 - If CMake fails while downloading pybind11/Eigen, the machine likely cannot access GitHub/GitLab. Preinstall pybind11/Eigen through a system package manager or another available method.
 
-If PyTorch imports or CUDA detection fail, reinstall the PyTorch wheel that matches your local CUDA version.
+If PyTorch imports or CUDA detection fail, first check `torch.__version__`, `torch.version.cuda`, and `torch.cuda.is_available()` with the verification command above. Windows/Linux should resolve to a `+cu130` wheel by default; use `--no-install-package torch` plus a manual install only if you need a different CUDA/CPU wheel.

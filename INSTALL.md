@@ -9,11 +9,11 @@
 - 使用 uv 管理虚拟环境、依赖同步、锁文件和命令运行。
 - 保留 `setup.py` 负责 `MotionCorrection` 的 CMake/C++ extension 构建。
 - Docker 依赖锁定流程暂不改动，继续使用 `docker_requirements.in`、`docker_requirements.txt` 和 `kimodo/scripts/lock_requirements.py`。
-- PyTorch 建议按本机 CUDA/CPU 环境单独安装，避免 uv/pip 自动选择到不合适的 wheel。
+- PyTorch 已纳入 uv 管理。Windows/Linux 默认使用 PyTorch CUDA 13.0 wheel；macOS 回退到 PyPI wheel。
 
 ## 前置要求
 
-- Python 3.10 或更新版本
+- Python 3.10 到 3.13。当前项目不使用 Python 3.14+，因为 PyTorch 的部分 JIT 路径在 3.14+ 上仍会产生兼容性警告。
 - uv
 - CMake 3.15 或更新版本
 - C++17 编译器
@@ -27,26 +27,36 @@
 Windows PowerShell:
 
 ```powershell
-uv venv --python 3.10
+uv venv --python 3.13
 .\.venv\Scripts\activate
 ```
 
 Linux/macOS:
 
 ```bash
-uv venv --python 3.10
+uv venv --python 3.13
 source .venv/bin/activate
 ```
 
-## 安装 PyTorch
+## PyTorch 版本
 
-CUDA 12.4 示例:
+本 fork 在 `pyproject.toml` 中直接声明 `torch`，并通过 uv source 配置控制 PyTorch 来源:
+
+- Windows/Linux: `https://download.pytorch.org/whl/cu130`
+- macOS: PyPI 默认 wheel
+
+因此通常不需要手动运行 `uv pip install torch ...`。`uv sync` 会按当前平台安装 `uv.lock` 中锁定的 PyTorch 版本。同步后可用下面的命令确认:
 
 ```powershell
-uv pip install torch --index-url https://download.pytorch.org/whl/cu124
+uv run python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
 ```
 
-CPU 版或其他 CUDA 版本请按 PyTorch 官方安装命令替换上面的命令。这里不把 PyTorch 额外写入 uv dependency group，是为了避免在不同机器上解析到不合适的 CUDA/CPU wheel。
+如果你确实需要 CPU-only 或其他 CUDA 版本，可以临时跳过项目锁定的 torch，然后手动安装目标 wheel:
+
+```powershell
+uv sync --extra all --group dev --group docs --no-install-package torch
+uv pip install torch --index-url <your-pytorch-index-url>
+```
 
 ## 同步项目依赖
 
@@ -62,7 +72,7 @@ uv sync --extra all --group dev --group docs
 uv sync --extra all --group dev --group docs --no-install-package torch
 ```
 
-`torch` 虽然没有在本项目中作为直接依赖特别配置，但会通过 `peft`/`transformers` 等依赖进入解析结果。使用 `--no-install-package torch` 可以保留你手动安装的 CUDA/CPU 版本。
+`torch` 现在是项目直接依赖。使用 `--no-install-package torch` 可以保留你手动安装的 CUDA/CPU 版本，但正常开发推荐直接让 uv 按锁文件管理 PyTorch。
 
 以上命令会安装当前项目，并通过以下链路触发 `MotionCorrection` 的 CMake 构建:
 
@@ -150,7 +160,7 @@ uv run kimodo_gen --help
 
 ## Troubleshooting
 
-如果 `uv lock` 或 `uv sync` 提示 Python 版本不兼容，请确认当前环境使用的是 Python 3.10 或更新版本。
+如果 `uv lock` 或 `uv sync` 提示 Python 版本不兼容，请确认当前环境使用的是 Python 3.10 到 3.13。
 
 如果 `uv sync` 在构建 `MotionCorrection` 时失败，优先检查:
 
@@ -159,4 +169,4 @@ uv run kimodo_gen --help
 - Windows 上是否已安装 Visual Studio Build Tools，或者 PATH 中是否有可用的 `g++`。
 - 如果 CMake 尝试下载 pybind11/Eigen 失败，说明本机无法访问 GitHub/GitLab；可先通过系统包管理器或其他方式预装 pybind11/Eigen。
 
-如果 PyTorch 相关导入或 CUDA 检测失败，重新按本机 CUDA 版本安装对应 PyTorch wheel。
+如果 PyTorch 相关导入或 CUDA 检测失败，先用上面的确认命令检查 `torch.__version__`、`torch.version.cuda` 和 `torch.cuda.is_available()`。默认 Windows/Linux 环境应解析到 `+cu130` wheel；如果你需要其他 CUDA/CPU wheel，再使用 `--no-install-package torch` 加手动安装覆盖。
