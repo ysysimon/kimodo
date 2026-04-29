@@ -4,12 +4,13 @@
 
 from .jobs import JobManager
 from .runtime import ModelRuntime
-from .schemas import GenerationRequest, GenerationResult, JobRecord, JobStatus
+from .schemas import ArtifactRecord, GenerationRequest, GenerationResult, JobRecord, JobStatus
 from .storage import JobStorage
 
 __all__ = [
     "GenerationRequest",
     "GenerationResult",
+    "ArtifactRecord",
     "JobManager",
     "JobRecord",
     "JobStatus",

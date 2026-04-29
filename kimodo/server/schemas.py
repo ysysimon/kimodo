@@ -37,7 +37,8 @@ class GenerationRequest:
     cfg_weight: float | list[float] | None = None
     num_transition_frames: int = 5
     first_heading_angle: float | list[float] | None = None
-    formats: list[str] = field(default_factory=lambda: ["npz"])
+    formats: list[str] = field(default_factory=lambda: ["npz", "bvh"])
+    zip_output: bool = False
     postprocess: bool = True
     root_margin: float = 0.04
     constraints: Any | None = None
@@ -48,9 +49,25 @@ class GenerationRequest:
 
 
 @dataclass
+class ArtifactRecord:
+    key: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    download_url: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ArtifactRecord":
+        return cls(**data)
+
+
+@dataclass
 class GenerationResult:
     job_id: str | None
-    artifacts: dict[str, str] = field(default_factory=dict)
+    artifacts: dict[str, ArtifactRecord] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -63,7 +80,7 @@ class JobRecord:
     job_dir: str
     progress: float = 0.0
     message: str = ""
-    artifacts: dict[str, str] = field(default_factory=dict)
+    artifacts: dict[str, ArtifactRecord] = field(default_factory=dict)
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,4 +92,9 @@ class JobRecord:
     def from_dict(cls, data: dict[str, Any]) -> "JobRecord":
         data = dict(data)
         data["status"] = JobStatus(data["status"])
+        artifacts = data.get("artifacts") or {}
+        data["artifacts"] = {
+            key: ArtifactRecord.from_dict(value) if isinstance(value, dict) else value
+            for key, value in artifacts.items()
+        }
         return cls(**data)

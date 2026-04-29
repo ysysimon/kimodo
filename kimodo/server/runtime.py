@@ -14,7 +14,7 @@ from kimodo.constraints import load_constraints_lst
 from kimodo.model.cfg import CFG_TYPES
 from kimodo.tools import seed_everything
 
-from .exports import save_npz_artifact
+from .exports import save_bvh_artifacts, save_npz_artifacts, save_zip_artifact
 from .schemas import GenerationRequest, GenerationResult
 
 
@@ -107,8 +107,36 @@ class ModelRuntime:
             **cfg_kwargs,
         )
 
+        artifacts_dir = job_dir / "artifacts"
+        formats = {fmt.lower() for fmt in request.formats}
         artifacts = {}
-        if "npz" in request.formats:
-            artifacts["npz"] = save_npz_artifact(job_dir / "motion.npz", output)
+        if "npz" in formats:
+            artifacts.update(
+                save_npz_artifacts(
+                    artifacts_dir,
+                    output,
+                    job_id=request.job_id,
+                )
+            )
+        if "bvh" in formats:
+            artifacts.update(
+                save_bvh_artifacts(
+                    artifacts_dir,
+                    output,
+                    skeleton=model.skeleton,
+                    fps=model.fps,
+                    device=self.device,
+                    job_id=request.job_id,
+                )
+            )
+
+        if request.zip_output and artifacts:
+            artifacts = {
+                "zip": save_zip_artifact(
+                    artifacts_dir,
+                    artifacts,
+                    job_id=request.job_id,
+                )
+            }
 
         return GenerationResult(job_id=request.job_id, artifacts=artifacts)

@@ -161,3 +161,6 @@ onelogger.err
 
 # deploy files
 /helm-library
+
+# uv
+.uv-cache

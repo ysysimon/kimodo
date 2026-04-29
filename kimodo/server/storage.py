@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from .schemas import GenerationRequest, JobRecord
+from .schemas import ArtifactRecord, GenerationRequest, JobRecord
 
 
 class JobStorage:
@@ -27,6 +27,9 @@ class JobStorage:
     def job_dir(self, job_id: str) -> Path:
         return self.root / job_id
 
+    def artifacts_dir(self, job_id: str) -> Path:
+        return self.job_dir(job_id) / "artifacts"
+
     def create_job_dir(self, job_id: str) -> Path:
         path = self.job_dir(job_id)
         path.mkdir(parents=True, exist_ok=False)
@@ -42,6 +45,28 @@ class JobStorage:
     def read_status(self, job_id: str) -> JobRecord:
         with open(self.job_dir(job_id) / "status.json", "r", encoding="utf-8") as f:
             return JobRecord.from_dict(json.load(f))
+
+    def resolve_artifact(self, job_id: str, artifact_key: str) -> tuple[Path, ArtifactRecord]:
+        """Resolve an artifact key to a local path for a future HTTP adapter.
+
+        The caller supplies only ``job_id`` and an artifact key recorded in
+        ``status.json``. The stored filename is resolved under the job's
+        artifacts directory to avoid arbitrary path downloads.
+        """
+        record = self.read_status(job_id)
+        artifact = record.artifacts.get(artifact_key)
+        if artifact is None:
+            raise KeyError(f"Artifact {artifact_key!r} not found for job {job_id!r}.")
+        if not isinstance(artifact, ArtifactRecord):
+            raise TypeError(f"Artifact {artifact_key!r} is not a structured ArtifactRecord.")
+
+        artifacts_dir = self.artifacts_dir(job_id).resolve()
+        path = (artifacts_dir / artifact.filename).resolve()
+        if artifacts_dir != path.parent:
+            raise ValueError(f"Artifact filename escapes artifacts directory: {artifact.filename!r}.")
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        return path, artifact
 
     @staticmethod
     def _write_json(path: Path, data: dict) -> None:
