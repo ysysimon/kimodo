@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Literal
 
-from kimodo import DEFAULT_MODEL
+from kimodo.model.registry import DEFAULT_MODEL
 
 
 class JobStatus(str, Enum):

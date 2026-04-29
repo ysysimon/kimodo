@@ -8,18 +8,19 @@ and ``ModelRuntime`` as the server grows.
 """
 
 from .jobs import JobManager
-from .runtime import ModelRuntime
+from .runtime import ModelRuntime, Runtime
 from .storage import JobStorage
 
 
-def create_app(storage_root: str | None = None):
+def create_app(storage_root: str | None = None, runtime: Runtime | None = None):
     """Create a server application.
 
     This placeholder wires the core objects together. A future FastAPI/Flask
     adapter can wrap this function without changing the runtime layer.
+    Tests and smoke checks can pass a fake runtime to avoid loading models.
     """
     storage = JobStorage(storage_root)
-    runtime = ModelRuntime()
+    runtime = ModelRuntime() if runtime is None else runtime
     jobs = JobManager(runtime=runtime, storage=storage)
     return {
         "jobs": jobs,
