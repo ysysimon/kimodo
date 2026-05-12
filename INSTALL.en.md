@@ -117,6 +117,14 @@ uv run python -m kimodo.scripts.generate --help
 uv run python kimodo/scripts/lock_requirements.py
 ```
 
+## Run tests
+
+Run pytest through uv so the tests use the Python interpreter, dependencies, and lockfile resolved for this project:
+
+```powershell
+uv run pytest
+```
+
 ## Local text encoder environment variables
 
 If you cannot access the gated `meta-llama/Meta-Llama-3-8B-Instruct` repository on Hugging Face directly, you can download a compatible Llama base model from another source and point Kimodo's LLM2Vec text encoder at the local directory with `LLM2VEC_BASE_MODEL_PATH`.

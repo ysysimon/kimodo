@@ -3,7 +3,7 @@
 """Server-side building blocks for running Kimodo as a persistent inference service."""
 
 from .jobs import JobManager
-from .runtime import ModelRuntime
+from .runtime import ModelRuntime, TextEncoderServerConfig, add_text_encoder_args, text_encoder_config_from_args
 from .schemas import ArtifactRecord, GenerationRequest, GenerationResult, JobRecord, JobStatus
 from .storage import JobStorage
 
@@ -16,4 +16,7 @@ __all__ = [
     "JobStatus",
     "JobStorage",
     "ModelRuntime",
+    "TextEncoderServerConfig",
+    "add_text_encoder_args",
+    "text_encoder_config_from_args",
 ]

@@ -117,6 +117,14 @@ uv run python -m kimodo.scripts.generate --help
 uv run python kimodo/scripts/lock_requirements.py
 ```
 
+## 运行测试
+
+推荐通过 uv 运行 pytest，这样测试使用的 Python、依赖和 `uv.lock` 保持一致:
+
+```powershell
+uv run pytest
+```
+
 ## 本地 text encoder 环境变量
 
 如果无法直接访问 Hugging Face 上的 gated `meta-llama/Meta-Llama-3-8B-Instruct`，可以先从其他来源下载兼容的 Llama base model 到本地目录，然后通过 `LLM2VEC_BASE_MODEL_PATH` 指定给 Kimodo 的 LLM2Vec text encoder 使用。
