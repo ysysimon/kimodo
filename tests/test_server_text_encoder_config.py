@@ -18,6 +18,7 @@ from kimodo.server.runtime import (
     add_text_encoder_args,
     text_encoder_config_from_args,
 )
+from kimodo.server.runtime.text_encoder import TextEncoderService
 
 
 class DummyModel:
@@ -57,7 +58,7 @@ def test_external_text_encoder_mode_sets_api_env_and_probes(monkeypatch):
     probes = []
 
     monkeypatch.setattr(kimodo, "load_model", lambda *args, **kwargs: DummyModel(), raising=False)
-    monkeypatch.setattr(ModelRuntime, "_probe_text_encoder_url", lambda self, url: probes.append(url))
+    monkeypatch.setattr(TextEncoderService, "_probe_text_encoder_url", lambda self, url: probes.append(url))
     runtime = ModelRuntime(
         device="cpu",
         text_encoder_config=TextEncoderServerConfig(mode="external", url="http://encoder.example:9550/"),
@@ -75,7 +76,7 @@ def test_auto_text_encoder_mode_falls_back_to_local(monkeypatch):
         raise RuntimeError(f"unreachable: {url}")
 
     monkeypatch.setattr(kimodo, "load_model", lambda *args, **kwargs: DummyModel(), raising=False)
-    monkeypatch.setattr(ModelRuntime, "_probe_text_encoder_url", fail_probe)
+    monkeypatch.setattr(TextEncoderService, "_probe_text_encoder_url", fail_probe)
     runtime = ModelRuntime(
         device="cpu",
         text_encoder_config=TextEncoderServerConfig(mode="auto", url="http://127.0.0.1:9550/"),
@@ -114,8 +115,8 @@ def test_managed_text_encoder_starts_subprocess_and_closes(monkeypatch):
         return process
 
     monkeypatch.setattr(kimodo, "load_model", lambda *args, **kwargs: DummyModel(), raising=False)
-    monkeypatch.setattr("kimodo.server.runtime.subprocess.Popen", fake_popen)
-    monkeypatch.setattr(ModelRuntime, "_probe_text_encoder_url", lambda self, url: None)
+    monkeypatch.setattr("kimodo.server.runtime.text_encoder.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(TextEncoderService, "_probe_text_encoder_url", lambda self, url: None)
 
     runtime = ModelRuntime(
         device="cpu",
@@ -171,7 +172,7 @@ def test_managed_text_encoder_timeout_terminates_subprocess(monkeypatch):
         processes.append(process)
         return process
 
-    monkeypatch.setattr("kimodo.server.runtime.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("kimodo.server.runtime.text_encoder.subprocess.Popen", fake_popen)
     runtime = ModelRuntime(
         device="cpu",
         text_encoder_config=TextEncoderServerConfig(mode="managed", startup_timeout_seconds=-1),
