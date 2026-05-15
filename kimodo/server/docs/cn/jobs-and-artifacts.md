@@ -59,13 +59,13 @@ server 模块把一次 generation 请求表示为一个 job。job 的状态和�
 | `filename` | job 的 `artifacts/` 目录下的文件名。 |
 | `content_type` | 下载时可使用的 content type。 |
 | `size_bytes` | 文件大小。 |
-| `download_url` | 未来 HTTP adapter 暴露给 client 的下载路径。 |
+| `download_url` | HTTP adapter 暴露给 client 的下载路径。 |
 
 生成结果不会把任意本地路径暴露给 client。下载时应由服务端根据 `job_id` 和 `artifact_key` 解析文件。
 
 ## 下载模型
 
-未来 HTTP adapter 可以暴露类似接口：
+FastAPI adapter 暴露如下下载接口：
 
 ```text
 GET /jobs/{job_id}/artifacts/{artifact_key}
@@ -78,3 +78,5 @@ path, artifact = storage.resolve_artifact(job_id, artifact_key)
 ```
 
 `resolve_artifact()` 会从 `status.json` 读取 artifact metadata，并确保文件位于当前 job 的 `artifacts/` 目录下，避免 client 通过路径参数下载任意本地文件。
+
+Job 状态响应会刻意省略 `job_dir`，因为它是服务端本地路径。当前内部 API 允许失败 job 返回 `error` traceback，方便本地开发和 smoke check。

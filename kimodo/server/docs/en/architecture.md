@@ -1,9 +1,9 @@
 # Server Architecture
 
 The Kimodo server package provides reusable server-side core building blocks
-without binding them directly to a specific HTTP framework. This keeps model
-loading, job lifecycle management, and artifact handling stable when a future
-FastAPI, Flask, or other adapter is added.
+without binding model execution to a specific HTTP framework. A thin FastAPI
+adapter wraps those core objects for HTTP access while keeping model loading,
+job lifecycle management, and artifact handling in the core layer.
 
 ## Module Responsibilities
 
@@ -15,6 +15,7 @@ FastAPI, Flask, or other adapter is added.
 | `storage.py` | Job directories, `request.json`, `status.json`, and artifact path resolution. |
 | `exports.py` | Exports runtime output as NPZ, BVH, or zip artifacts. |
 | `runtime/` | Runtime contract, real model runtime, fake runtime, and text encoder service management. |
+| `asgi.py` | FastAPI routes, HTTP request/response models, downloads, and lifespan cleanup. |
 
 ## Data Flow
 
@@ -31,18 +32,28 @@ GenerationRequest
 ```
 
 `JobRecord.artifacts` stores downloadable artifact metadata, not arbitrary local
-paths. A future HTTP adapter should resolve real files through
+paths. The HTTP adapter resolves real files through
 `JobStorage.resolve_artifact(job_id, artifact_key)`.
 
 ## HTTP Adapter Boundary
 
-A future FastAPI adapter should remain thin:
+The FastAPI adapter remains thin:
 
 - Convert HTTP requests into `GenerationRequest`.
 - Call `JobManager.submit()`, `JobManager.get()`, and `JobManager.cancel()`.
 - Use `JobStorage.resolve_artifact()` to serve artifact downloads.
-- Return `JobRecord.to_dict()` or an equivalent response shape to clients.
+- Return HTTP response models that omit server-local `job_dir`.
+- Shut down the job executor and close runtime-owned resources during ASGI
+  lifespan cleanup.
 
 The HTTP adapter should not load models directly, manage text encoder
 subprocesses, construct artifact local paths by hand, or bypass `JobStorage`
 when accessing job files.
+
+The current FastAPI routes are:
+
+- `GET /health`
+- `POST /jobs`
+- `GET /jobs/{job_id}`
+- `POST /jobs/{job_id}/cancel`
+- `GET /jobs/{job_id}/artifacts/{artifact_key}`

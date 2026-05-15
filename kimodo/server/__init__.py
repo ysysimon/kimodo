@@ -19,4 +19,13 @@ __all__ = [
     "TextEncoderServerConfig",
     "add_text_encoder_args",
     "text_encoder_config_from_args",
+    "create_fastapi_app",
 ]
+
+
+def __getattr__(name: str):
+    if name == "create_fastapi_app":
+        from .asgi import create_fastapi_app
+
+        return create_fastapi_app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

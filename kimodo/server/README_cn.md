@@ -1,6 +1,6 @@
 # Kimodo Server
 
-Kimodo server 模块提供一组 framework-neutral 的服务端构件，用于把 Kimodo 模型作为持久化生成服务运行。这里的 server 并非某个具体 HTTP 框架的应用，而是未来 HTTP/FastAPI adapter 可以复用的核心层。
+Kimodo server 模块提供一组 framework-neutral 的服务端构件，用于把 Kimodo 模型作为持久化生成服务运行，并提供一个薄的 FastAPI adapter 用于 HTTP 访问。
 
 English documentation: [README.md](README.md).
 
@@ -16,8 +16,9 @@ English documentation: [README.md](README.md).
 - `GenerationRequest`：一次生成请求的数据结构。
 - `ArtifactRecord`：生成文件的可下载元数据。
 - `TextEncoderServerConfig`：配置 text encoder 的启动策略。
+- `create_fastapi_app`：用于 HTTP route 的 FastAPI adapter factory。
 
-HTTP adapter 尚未接入。未来的 FastAPI 或其他 HTTP adapter 应该保持薄封装，只负责 route、request/response 转换和文件下载，不应该把模型加载、job 生命周期或 artifact 路径解析写进 adapter 里。
+FastAPI adapter 只做薄封装：route、request/response 转换和文件下载属于 adapter；模型加载、job 生命周期和 artifact 路径解析仍然保留在 server core。
 
 ## 最小使用示例
 
@@ -64,6 +65,39 @@ app = create_app(
     )
 )
 ```
+
+## FastAPI 使用
+
+启动真实 runtime 服务：
+
+```bash
+uv run python -m kimodo.scripts.run_server --host 127.0.0.1 --port 8000
+```
+
+如果只想做轻量 smoke check，不加载模型、CUDA 或 text encoder，可以使用 `FakeRuntime`：
+
+```bash
+uv run python -m kimodo.scripts.run_server --runtime fake --storage-root outputs/server-smoke
+```
+
+也可以使用 Poe task：
+
+```bash
+uv run poe server
+uv run poe server-fake
+```
+
+安装后的环境也可以使用 `kimodo_server` console script。
+
+HTTP adapter 当前暴露：
+
+- `GET /health`
+- `POST /jobs`
+- `GET /jobs/{job_id}`
+- `POST /jobs/{job_id}/cancel`
+- `GET /jobs/{job_id}/artifacts/{artifact_key}`
+
+`POST /jobs` 接收与 `GenerationRequest` 相同的 generation 字段，但不接收 `job_id`；`job_id` 由服务端生成。Job 响应会刻意省略服务端本地路径 `job_dir`。Artifact 下载通过 `JobStorage.resolve_artifact(job_id, artifact_key)` 解析真实文件；adapter 不会手动拼接本地文件路径。
 
 ## Text Encoder 策略
 
@@ -149,4 +183,4 @@ uv run poe test-runtime-real-local
 - [Job 与 Artifact](docs/cn/jobs-and-artifacts.md)：job 生命周期、状态记录和 artifact 下载模型。
 - [Runtime](docs/cn/runtime.md)：`Runtime`、`ModelRuntime`、`FakeRuntime` 的职责和注入方式。
 - [Text Encoder](docs/cn/text-encoder.md)：text encoder 的 `external/local/managed/auto` 启动策略。
-- [模块架构](docs/cn/architecture.md)：server 模块内部边界，以及未来 HTTP adapter 应如何接入。
+- [模块架构](docs/cn/architecture.md)：server 模块内部边界，以及 FastAPI adapter 如何接入。

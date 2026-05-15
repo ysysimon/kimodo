@@ -84,6 +84,7 @@ explicit = true
 [project.scripts]
 kimodo_gen = "kimodo.scripts.generate:main"
 kimodo_demo = "kimodo.demo:main"
+kimodo_server = "kimodo.scripts.run_server:main"
 kimodo_textencoder = "kimodo.scripts.run_text_encoder_server:main"
 kimodo_convert = "kimodo.scripts.motion_convert:main"
 
@@ -163,6 +164,14 @@ cmd = "kimodo_demo"
 [tool.poe.tasks.text-encoder]
 help = "Start the local Kimodo text encoder service."
 cmd = "kimodo_textencoder"
+
+[tool.poe.tasks.server]
+help = "Start the Kimodo FastAPI server with the real runtime."
+cmd = "python -m kimodo.scripts.run_server"
+
+[tool.poe.tasks.server-fake]
+help = "Start the Kimodo FastAPI server with FakeRuntime for smoke checks."
+cmd = "python -m kimodo.scripts.run_server --runtime fake"
 
 [tool.poe.tasks.torch-info]
 help = "Print the installed torch and CUDA runtime status."

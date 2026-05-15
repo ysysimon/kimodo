@@ -72,7 +72,7 @@ should be resolved server-side from `job_id` and `artifact_key`.
 
 ## Download Model
 
-A future HTTP adapter can expose an endpoint like:
+The FastAPI adapter exposes:
 
 ```text
 GET /jobs/{job_id}/artifacts/{artifact_key}
@@ -87,3 +87,6 @@ path, artifact = storage.resolve_artifact(job_id, artifact_key)
 `resolve_artifact()` reads artifact metadata from `status.json` and ensures the
 file is located under the current job's `artifacts/` directory, preventing
 clients from using path parameters to download arbitrary local files.
+
+Job status responses intentionally omit `job_dir`, because it is a server-local
+path. Failed jobs may include `error` traceback text in this internal API.
