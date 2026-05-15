@@ -20,6 +20,8 @@ from kimodo.server.runtime import (
 )
 from kimodo.server.runtime.text_encoder import TextEncoderService
 
+pytestmark = pytest.mark.server
+
 
 class DummyModel:
     pass

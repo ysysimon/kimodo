@@ -73,6 +73,124 @@ app = create_app(
 )
 ```
 
+## Text Encoder Strategy
+
+The text encoder strategy applies to both real `ModelRuntime` services and the
+`runtime and inference` real runtime test. Both paths read environment variables
+through `TextEncoderServerConfig.from_env()` and prepare the text encoder before
+loading a Kimodo model.
+
+Common modes:
+
+- `TEXT_ENCODER_MODE=external`: connect to an already-running text encoder
+  service and probe `TEXT_ENCODER_URL`. This is the server runtime default.
+- `TEXT_ENCODER_MODE=local`: load the LLM2Vec text encoder inside the current
+  process.
+- `TEXT_ENCODER_MODE=managed`: let the server runtime start and manage a text
+  encoder subprocess.
+- `TEXT_ENCODER_MODE=auto`: try `external` first; if unavailable, fall back to
+  `local`.
+
+Important environment variables:
+
+- `TEXT_ENCODER_URL`: service URL used by `external`, `auto`, and `managed`;
+  when unset, the default URL is derived from `GRADIO_SERVER_PORT`.
+- `GRADIO_SERVER_NAME`, `GRADIO_SERVER_PORT`: host/port used by a managed text
+  encoder subprocess.
+- `TEXT_ENCODER_DEVICE`: text encoder device, for example `cpu` or `cuda:0`.
+- `TEXT_ENCODER_FP32`: whether to use an fp32 text encoder.
+- `TEXT_ENCODER`: text encoder preset, currently defaulting to `llm2vec`.
+- `TEXT_ENCODER_TMP_FOLDER`: temporary directory used by the managed text
+  encoder subprocess.
+- `LLM2VEC_BASE_MODEL_PATH`: overrides only the LLM2Vec base model path; it does
+  not override the PEFT model.
+- `TEXT_ENCODERS_DIR`: prefixes the default base/PEFT model names with a local
+  root directory. If `LLM2VEC_BASE_MODEL_PATH` is also set, the base model uses
+  `LLM2VEC_BASE_MODEL_PATH` instead.
+- `HF_HOME`, `HUGGINGFACE_CACHE_DIR`: affect Hugging Face/transformers cache
+  locations; `HUGGINGFACE_CACHE_DIR` is passed as LLM2Vec's cache dir.
+
+When `local` is used, or when `auto` falls back to `local`, the environment must
+be able to load LLM2Vec and the gated `meta-llama/Meta-Llama-3-8B-Instruct` base
+model. Usually this means the Hugging Face account has gated repo access and
+`hf auth login` is configured, or `LLM2VEC_BASE_MODEL_PATH` points to an existing
+local base model. The PEFT model still comes from
+`McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised` unless
+`TEXT_ENCODERS_DIR` provides a local PEFT path.
+
+On Windows, copy `scripts/start_text_encoder.template.ps1` to a local script and
+fill in your own cache/model directories. Documentation examples use placeholders
+instead of machine-specific paths:
+
+```powershell
+Copy-Item scripts/start_text_encoder.template.ps1 scripts/start_text_encoder.ps1
+.\scripts\start_text_encoder.ps1 -HfHome "<HF_HOME>" -Llm2VecBaseModelPath "<LLAMA_BASE_MODEL_DIR>" -TextEncoderDevice "cuda:0"
+```
+
+See [Text Encoder](docs/en/text-encoder.md) for more detail.
+
+## Testing
+
+Server tests are split into default lightweight tests and explicitly enabled
+real inference tests. The default layer does not load real models or use CUDA,
+so it is suitable for local development and CI:
+
+```bash
+uv run --no-sync pytest
+```
+
+This follows the project pytest config and collects every test under `tests/`.
+The server real inference test is collected too, but it does not run during a
+plain `uv run --no-sync pytest`.
+
+To run only the lightweight server tests:
+
+```bash
+uv run --no-sync pytest -m "server and not inference"
+```
+
+You can also run every test with the `server` marker. The real inference test is
+selected but skipped unless its opt-in environment variable is set:
+
+```bash
+uv run --no-sync pytest -m server
+```
+
+Run the real `ModelRuntime` inference smoke test only on a machine with the
+required model, text encoder, and device setup. In PowerShell:
+
+```powershell
+$env:KIMODO_RUN_REAL_RUNTIME = "1"
+uv run --no-sync pytest -m "runtime and inference"
+```
+
+In bash/zsh:
+
+```bash
+KIMODO_RUN_REAL_RUNTIME=1 uv run --no-sync pytest -m "runtime and inference"
+```
+
+Setting `KIMODO_RUN_REAL_RUNTIME=1` and then running plain
+`uv run --no-sync pytest` is not enough to run real inference; the
+`-m "runtime and inference"` marker selection is required too. The real
+inference test uses the text encoder strategy described above. If the text
+encoder, model access, local cache, or device prerequisites are not ready, the
+test is skipped with an environment setup message.
+
+Real inference test-only environment variables:
+
+- `KIMODO_RUN_REAL_RUNTIME`: explicit opt-in switch for the real inference test.
+  The test only runs when this is set to `1` and pytest also selects
+  `-m "runtime and inference"`.
+- `KIMODO_REAL_MODEL`: model name for the real inference test. Defaults to
+  `kimodo-soma-rp`.
+- `KIMODO_REAL_DEVICE`: device for the real inference test. Defaults to `cpu`,
+  for example `cuda:0`.
+
+These variables only affect the test itself. The text encoder environment
+variables in the previous section are not test-only; they affect both real
+`ModelRuntime` services and the real inference test.
+
 ## Reading Path
 
 - [Request parameters](docs/en/requests.md): how to build a `GenerationRequest`

@@ -2,6 +2,8 @@
 
 server runtime 在加载 Kimodo 模型前会准备 text encoder。`TextEncoderServerConfig` 定义 server 侧 text encoder 的启动策略，`ModelRuntime.prepare_text_encoder()` 会委托内部 `TextEncoderService` 执行具体准备工作。
 
+这套策略同时影响正式运行的 server runtime 和 `runtime and inference` 真实推理测试。真实推理测试不会定义另一套 text encoder 行为；它同样读取 `TextEncoderServerConfig.from_env()`，因此环境变量的含义和优先级与正式 `ModelRuntime` 一致。
+
 ## 启动模式
 
 | 模式 | 含义 | 适用场景 |
@@ -42,6 +44,17 @@ config = TextEncoderServerConfig(
 | `GRADIO_SERVER_NAME` | managed text encoder service host。 |
 | `GRADIO_SERVER_PORT` | managed text encoder service port，也用于默认 URL 端口。 |
 
+LLM2Vec 相关变量：
+
+| 变量 | 用途 |
+| --- | --- |
+| `LLM2VEC_BASE_MODEL_PATH` | 覆盖 LLM2Vec 的 base model 路径。只影响 base model，不覆盖 PEFT model。 |
+| `TEXT_ENCODERS_DIR` | 给默认 base/PEFT model 名称加本地根目录前缀。如果同时设置了 `LLM2VEC_BASE_MODEL_PATH`，base model 使用 `LLM2VEC_BASE_MODEL_PATH`，PEFT model 仍按 `TEXT_ENCODERS_DIR` 解析。 |
+| `HF_HOME` | Hugging Face 默认缓存根目录，由 Hugging Face/transformers 读取。 |
+| `HUGGINGFACE_CACHE_DIR` | 作为 LLM2Vec 加载时传给 transformers 的 cache dir。 |
+
+`LLM2VEC_BASE_MODEL_PATH` 的作用点在 `LLM2VecEncoder` 内部：它会替换配置中的 `base_model_name_or_path`，例如默认的 LLM2Vec base model 名称；但 `peft_model_name_or_path` 不会被它替换。若需要本地 PEFT model，请使用 `TEXT_ENCODERS_DIR` 提供对应目录布局，或调整实际加载配置。
+
 ## CLI 参数
 
 `add_text_encoder_args(parser)` 会添加：
@@ -75,6 +88,8 @@ server 会设置 `TEXT_ENCODER`、`TEXT_ENCODER_TMP_FOLDER`、`GRADIO_SERVER_NAM
 - probe 失败：打印 fallback 信息，并切换到同一进程内的 text encoder 对象。
 
 这适合开发环境，但生产环境更建议显式使用 `external`、`local` 或 `managed`。
+
+注意：`auto` fallback 到 `local` 后，需要当前进程能加载 LLM2Vec 和 gated 的 `meta-llama/Meta-Llama-3-8B-Instruct` base model。通常需要 Hugging Face 账号有 gated repo 访问权限并完成认证，或者设置 `LLM2VEC_BASE_MODEL_PATH` 指向本地已有的 base model。否则正式 runtime 会加载失败；真实推理测试会把这类环境未准备好的情况报告为 skip。
 
 ## 资源释放
 

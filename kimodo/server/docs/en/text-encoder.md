@@ -5,6 +5,12 @@ The server runtime prepares the text encoder before loading a Kimodo model.
 and `ModelRuntime.prepare_text_encoder()` delegates the actual work to the
 internal `TextEncoderService`.
 
+This strategy applies to both real server runtime usage and the
+`runtime and inference` real runtime test. The test does not define separate
+text encoder behavior; it reads `TextEncoderServerConfig.from_env()` just like a
+real `ModelRuntime` service, so the same environment variables and precedence
+rules apply.
+
 ## Startup Modes
 
 | Mode | Meaning | Useful when |
@@ -47,6 +53,21 @@ and then applies explicit CLI args on top.
 | `GRADIO_SERVER_NAME` | Host for the managed text encoder service. |
 | `GRADIO_SERVER_PORT` | Port for the managed text encoder service; also used by the default URL. |
 
+LLM2Vec-specific variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `LLM2VEC_BASE_MODEL_PATH` | Overrides the LLM2Vec base model path only. It does not override the PEFT model. |
+| `TEXT_ENCODERS_DIR` | Prefixes the default base/PEFT model names with a local root directory. If `LLM2VEC_BASE_MODEL_PATH` is also set, the base model uses `LLM2VEC_BASE_MODEL_PATH`, while the PEFT model still resolves through `TEXT_ENCODERS_DIR`. |
+| `HF_HOME` | Default Hugging Face cache root read by Hugging Face/transformers. |
+| `HUGGINGFACE_CACHE_DIR` | Passed as the transformers cache dir when LLM2Vec loads. |
+
+`LLM2VEC_BASE_MODEL_PATH` is consumed inside `LLM2VecEncoder`: it replaces the
+configured `base_model_name_or_path`, such as the default LLM2Vec base model
+name. It does not replace `peft_model_name_or_path`. To provide a local PEFT
+model, use `TEXT_ENCODERS_DIR` with the expected directory layout, or adjust the
+actual loading config.
+
 ## CLI Args
 
 `add_text_encoder_args(parser)` adds:
@@ -88,6 +109,13 @@ does not become ready within `startup_timeout_seconds`, the server raises
 
 This is convenient for development. Production deployments should usually choose
 `external`, `local`, or `managed` explicitly.
+
+Note: after `auto` falls back to `local`, the current process must be able to
+load LLM2Vec and the gated `meta-llama/Meta-Llama-3-8B-Instruct` base model.
+Usually that means the Hugging Face account has gated repo access and is
+authenticated, or `LLM2VEC_BASE_MODEL_PATH` points to an existing local base
+model. Otherwise, a real runtime service will fail during loading; the real
+runtime test reports this kind of missing environment as a skip.
 
 ## Resource Cleanup
 

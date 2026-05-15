@@ -17,6 +17,8 @@ from kimodo.server.runtime import FakeRuntime
 from kimodo.server.schemas import GenerationRequest, JobStatus
 from kimodo.server.storage import JobStorage
 
+pytestmark = pytest.mark.server
+
 
 @pytest.fixture
 def work_dir(request):
@@ -53,6 +55,39 @@ def test_fake_runtime_writes_requested_formats(work_dir):
     assert (work_dir / "artifacts" / "motion.bvh").is_file()
 
 
+def test_fake_runtime_normalizes_format_names(work_dir):
+    request = GenerationRequest(
+        texts=["A person walks."],
+        durations=[1.0],
+        formats=["NPZ", "BvH"],
+        job_id="job-mixed-case",
+    )
+
+    result = FakeRuntime().generate(request, job_dir=work_dir)
+
+    assert set(result.artifacts) == {"npz", "bvh"}
+    assert (work_dir / "artifacts" / "motion.npz").is_file()
+    assert (work_dir / "artifacts" / "motion.bvh").is_file()
+
+
+def test_fake_runtime_writes_multi_sample_artifacts(work_dir):
+    request = GenerationRequest(
+        texts=["A person walks."],
+        durations=[1.0],
+        formats=["npz", "bvh"],
+        num_samples=2,
+        job_id="job-multi-sample",
+    )
+
+    result = FakeRuntime().generate(request, job_dir=work_dir)
+
+    assert set(result.artifacts) == {"npz_00", "npz_01", "bvh_00", "bvh_01"}
+    assert (work_dir / "artifacts" / "motion_00.npz").is_file()
+    assert (work_dir / "artifacts" / "motion_01.npz").is_file()
+    assert (work_dir / "artifacts" / "motion_00.bvh").is_file()
+    assert (work_dir / "artifacts" / "motion_01.bvh").is_file()
+
+
 def test_fake_runtime_can_zip_artifacts(work_dir):
     request = GenerationRequest(
         texts=["A person walks."],
@@ -69,6 +104,7 @@ def test_fake_runtime_can_zip_artifacts(work_dir):
     assert artifact.filename == "artifacts.zip"
     assert artifact.content_type == "application/zip"
     assert (work_dir / "artifacts" / artifact.filename).is_file()
+    assert _zip_names(work_dir / "artifacts" / artifact.filename) == {"motion.npz", "motion.bvh"}
 
 
 def test_fake_runtime_rejects_mismatched_segments(work_dir):
@@ -115,3 +151,10 @@ def _wait_for_job(jobs: JobManager, job_id: str):
             return record
         time.sleep(0.01)
     pytest.fail(f"Timed out waiting for job {job_id}")
+
+
+def _zip_names(path: Path) -> set[str]:
+    from zipfile import ZipFile
+
+    with ZipFile(path) as zip_file:
+        return set(zip_file.namelist())

@@ -95,6 +95,12 @@ kimodo = ["assets/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "server: server module tests",
+  "runtime: real runtime or ModelRuntime tests",
+  "inference: tests that perform real model inference",
+  "slow: slow tests",
+]
 norecursedirs = [
   ".git",
   ".ruff_cache",
