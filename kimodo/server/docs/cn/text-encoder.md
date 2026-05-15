@@ -31,27 +31,49 @@ config = TextEncoderServerConfig(
 
 也可以通过环境变量或 CLI args 构造。`text_encoder_config_from_args()` 会先读取 `TextEncoderServerConfig.from_env()`，再用显式 CLI args 覆盖对应字段。
 
+## 本地 Poe 工作流
+
+本地开发时，把本机专属配置放在 `.env.local`，再通过项目 Poe task 启动 text encoder：
+
+```powershell
+Copy-Item .env.example .env.local
+uv run poe text-encoder
+```
+
+Linux/macOS 使用同一份 `.env.local`，启动命令也保持一致：
+
+```bash
+cp .env.example .env.local
+uv run poe text-encoder
+```
+
+`text-encoder` task 会加载可选的 `.env.local`，然后运行 `kimodo_textencoder`。额外 CLI 参数会继续透传，例如 `uv run poe text-encoder --fp32`。
+
 ## 环境变量
 
-| 变量 | 用途 |
-| --- | --- |
-| `TEXT_ENCODER_MODE` | server text encoder 模式：`external`、`local`、`managed`、`auto` 或兼容值 `api`。 |
-| `TEXT_ENCODER_URL` | external/auto/managed 模式使用的 service URL。 |
-| `TEXT_ENCODER_FP32` | 是否使用 fp32 text encoder。 |
-| `TEXT_ENCODER_DEVICE` | text encoder 使用的 device，例如 `cpu` 或 `cuda:0`。 |
-| `TEXT_ENCODER` | text encoder 名称，默认 `llm2vec`。 |
-| `TEXT_ENCODER_TMP_FOLDER` | managed subprocess 使用的临时目录。 |
-| `GRADIO_SERVER_NAME` | managed text encoder service host。 |
-| `GRADIO_SERVER_PORT` | managed text encoder service port，也用于默认 URL 端口。 |
+不是所有 text encoder 环境变量都会在所有模式下生效。先按当前模式判断变量作用范围：
+
+| 变量 | 主要生效模式 | 用途 |
+| --- | --- | --- |
+| `TEXT_ENCODER_MODE` | 全部 | server text encoder 模式：`external`、`local`、`managed`、`auto` 或兼容值 `api`。 |
+| `TEXT_ENCODER_URL` | `external`、`auto`、`managed` probe | service URL。`local` 不使用它；`managed` 会用它等待 subprocess 可用。 |
+| `TEXT_ENCODER_FP32` | `local`、`managed`、直接启动 `kimodo_textencoder` | 是否使用 fp32 text encoder。纯 `external` 时，当前进程不会用它加载 encoder。 |
+| `TEXT_ENCODER_DEVICE` | `local`、`managed`、`auto` fallback | text encoder 使用的 device，例如 `cpu` 或 `cuda:0`。纯 `external` 时，应在实际运行 text encoder service 的进程中设置。 |
+| `TEXT_ENCODER` | `local`、`managed`、直接启动 `kimodo_textencoder` | text encoder 名称，默认 `llm2vec`。纯 `external` 时，远端服务使用哪个 encoder 由远端进程决定。 |
+| `TEXT_ENCODER_TMP_FOLDER` | `managed`、直接启动 `kimodo_textencoder` | text encoder server 写临时 embedding 文件的目录。 |
+| `GRADIO_SERVER_NAME` | `managed`、直接启动 `kimodo_textencoder` | text encoder service host。 |
+| `GRADIO_SERVER_PORT` | `managed`、直接启动 `kimodo_textencoder`、默认 URL | text encoder service port，也用于未设置 `TEXT_ENCODER_URL` 时生成默认 URL。 |
 
 LLM2Vec 相关变量：
 
-| 变量 | 用途 |
-| --- | --- |
-| `LLM2VEC_BASE_MODEL_PATH` | 覆盖 LLM2Vec 的 base model 路径。只影响 base model，不覆盖 PEFT model。 |
-| `TEXT_ENCODERS_DIR` | 给默认 base/PEFT model 名称加本地根目录前缀。如果同时设置了 `LLM2VEC_BASE_MODEL_PATH`，base model 使用 `LLM2VEC_BASE_MODEL_PATH`，PEFT model 仍按 `TEXT_ENCODERS_DIR` 解析。 |
-| `HF_HOME` | Hugging Face 默认缓存根目录，由 Hugging Face/transformers 读取。 |
-| `HUGGINGFACE_CACHE_DIR` | 作为 LLM2Vec 加载时传给 transformers 的 cache dir。 |
+| 变量 | 主要生效模式 | 用途 |
+| --- | --- | --- |
+| `LLM2VEC_BASE_MODEL_PATH` | `local`、`managed`、`auto` fallback | 覆盖 LLM2Vec 的 base model 路径。只影响 base model，不覆盖 PEFT model。 |
+| `TEXT_ENCODERS_DIR` | `local`、`managed`、`auto` fallback | 给默认 base/PEFT model 名称加本地根目录前缀。如果同时设置了 `LLM2VEC_BASE_MODEL_PATH`，base model 使用 `LLM2VEC_BASE_MODEL_PATH`，PEFT model 仍按 `TEXT_ENCODERS_DIR` 解析。 |
+| `HF_HOME` | 本地加载 LLM2Vec 的进程 | Hugging Face 默认缓存根目录，由 Hugging Face/transformers 读取。 |
+| `HUGGINGFACE_CACHE_DIR` | 本地加载 LLM2Vec 的进程 | 作为 LLM2Vec 加载时传给 transformers 的 cache dir。 |
+
+纯 `external` 模式下，当前 server 进程只需要知道 `TEXT_ENCODER_URL`。如果外部 text encoder service 也在本机由你手动启动，那么 `HF_HOME`、`LLM2VEC_BASE_MODEL_PATH`、`TEXT_ENCODER_DEVICE` 等变量应该设置在启动那个 service 的进程里。
 
 `LLM2VEC_BASE_MODEL_PATH` 的作用点在 `LLM2VecEncoder` 内部：它会替换配置中的 `base_model_name_or_path`，例如默认的 LLM2Vec base model 名称；但 `peft_model_name_or_path` 不会被它替换。若需要本地 PEFT model，请使用 `TEXT_ENCODERS_DIR` 提供对应目录布局，或调整实际加载配置。
 

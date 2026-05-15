@@ -111,45 +111,50 @@ The `all` extra includes `server`, demo, and SOMA-related dependencies. The Kimo
 ## Common commands
 
 ```powershell
-uv run kimodo_gen --help
-uv run kimodo_demo
-uv run python -m kimodo.scripts.generate --help
+uv run poe
+uv run poe torch-info
+uv run poe demo
+uv run poe text-encoder
+uv run poe check-import
 uv run python kimodo/scripts/lock_requirements.py
 ```
+
+The recommended entry point is the project-locked Poe version: `uv run poe <task>`. If you installed `poethepoet` globally with `pipx` or another tool, you can also run `poe <task>` directly after completing `uv sync`.
 
 ## Run tests
 
 Run pytest through uv so the tests use the Python interpreter, dependencies, and lockfile resolved for this project:
 
 ```powershell
-uv run pytest
+uv run poe test
+uv run poe test-server
 ```
 
 ## Local text encoder environment variables
 
 If you cannot access the gated `meta-llama/Meta-Llama-3-8B-Instruct` repository on Hugging Face directly, you can download a compatible Llama base model from another source and point Kimodo's LLM2Vec text encoder at the local directory with `LLM2VEC_BASE_MODEL_PATH`.
 
-Example:
+Copy `.env.example` to a local config file:
 
 ```powershell
-$env:HF_HOME="D:\AI_cache\hf_cache"
-$env:LLM2VEC_BASE_MODEL_PATH="D:\AI_cache\Meta-Llama-3-8B-Instruct"
-uv run --no-sync kimodo_textencoder
+Copy-Item .env.example .env.local
 ```
 
-`LLM2VEC_BASE_MODEL_PATH` only overrides the LLM2Vec base model path. The PEFT adapter is still resolved from the Hugging Face cache or `TEXT_ENCODERS_DIR`. To reduce VRAM usage, you can also set:
+Then fill in machine-specific values in `.env.local`, for example:
+
+```dotenv
+HF_HOME='D:\AI_cache\hf_cache'
+LLM2VEC_BASE_MODEL_PATH='D:\AI_cache\Meta-Llama-3-8B-Instruct'
+TEXT_ENCODER_DEVICE=cpu
+```
+
+Start the text encoder:
 
 ```powershell
-$env:TEXT_ENCODER_DEVICE="cpu"
+uv run poe text-encoder
 ```
 
-This repository provides a template script:
-
-```powershell
-scripts/start_text_encoder.template.ps1
-```
-
-Copy it to `scripts/start_text_encoder.ps1` and fill in your local paths. The real local script is ignored by `.gitignore` and will not be committed.
+`LLM2VEC_BASE_MODEL_PATH` only overrides the LLM2Vec base model path. The PEFT adapter is still resolved from the Hugging Face cache or `TEXT_ENCODERS_DIR`. To reduce VRAM usage, set `TEXT_ENCODER_DEVICE=cpu` in `.env.local`.
 
 Regenerate the uv lockfile:
 
@@ -162,8 +167,8 @@ uv lock
 ## Verify the installation
 
 ```powershell
-uv run python -c "import kimodo; import motion_correction"
-uv run kimodo_gen --help
+uv run poe check-import
+uv run poe torch-info
 ```
 
 ## Troubleshooting

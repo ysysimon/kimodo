@@ -111,45 +111,50 @@ uv sync --extra all --group dev --group docs
 ## 常用命令
 
 ```powershell
-uv run kimodo_gen --help
-uv run kimodo_demo
-uv run python -m kimodo.scripts.generate --help
+uv run poe
+uv run poe torch-info
+uv run poe demo
+uv run poe text-encoder
+uv run poe check-import
 uv run python kimodo/scripts/lock_requirements.py
 ```
+
+推荐使用项目锁定的 `poe` 版本，即 `uv run poe <task>`。如果你已经用 `pipx` 或其他方式全局安装了 `poethepoet`，也可以在完成 `uv sync` 后直接运行 `poe <task>`。
 
 ## 运行测试
 
 推荐通过 uv 运行 pytest，这样测试使用的 Python、依赖和 `uv.lock` 保持一致:
 
 ```powershell
-uv run pytest
+uv run poe test
+uv run poe test-server
 ```
 
 ## 本地 text encoder 环境变量
 
 如果无法直接访问 Hugging Face 上的 gated `meta-llama/Meta-Llama-3-8B-Instruct`，可以先从其他来源下载兼容的 Llama base model 到本地目录，然后通过 `LLM2VEC_BASE_MODEL_PATH` 指定给 Kimodo 的 LLM2Vec text encoder 使用。
 
-示例：
+复制 `.env.example` 为本机配置文件：
 
 ```powershell
-$env:HF_HOME="D:\AI_cache\hf_cache"
-$env:LLM2VEC_BASE_MODEL_PATH="D:\AI_cache\Meta-Llama-3-8B-Instruct"
-uv run --no-sync kimodo_textencoder
+Copy-Item .env.example .env.local
 ```
 
-`LLM2VEC_BASE_MODEL_PATH` 只覆盖 LLM2Vec 的 base model 路径；PEFT adapter 仍按 Hugging Face cache 或 `TEXT_ENCODERS_DIR` 查找。如果希望降低显存占用，可以额外设置：
+然后在 `.env.local` 中填写本机路径，例如：
+
+```dotenv
+HF_HOME='D:\AI_cache\hf_cache'
+LLM2VEC_BASE_MODEL_PATH='D:\AI_cache\Meta-Llama-3-8B-Instruct'
+TEXT_ENCODER_DEVICE=cpu
+```
+
+启动 text encoder：
 
 ```powershell
-$env:TEXT_ENCODER_DEVICE="cpu"
+uv run poe text-encoder
 ```
 
-仓库提供了模板脚本：
-
-```powershell
-scripts/start_text_encoder.template.ps1
-```
-
-可以复制为本地脚本 `scripts/start_text_encoder.ps1` 并填写本机路径；真实脚本已加入 `.gitignore`，不会被提交。
+`LLM2VEC_BASE_MODEL_PATH` 只覆盖 LLM2Vec 的 base model 路径；PEFT adapter 仍按 Hugging Face cache 或 `TEXT_ENCODERS_DIR` 查找。如果希望降低显存占用，可以在 `.env.local` 中设置 `TEXT_ENCODER_DEVICE=cpu`。
 
 重新生成 uv 锁文件:
 
@@ -162,8 +167,8 @@ uv lock
 ## 验证安装
 
 ```powershell
-uv run python -c "import kimodo; import motion_correction"
-uv run kimodo_gen --help
+uv run poe check-import
+uv run poe torch-info
 ```
 
 ## Troubleshooting

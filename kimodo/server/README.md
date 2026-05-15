@@ -118,13 +118,12 @@ local base model. The PEFT model still comes from
 `McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised` unless
 `TEXT_ENCODERS_DIR` provides a local PEFT path.
 
-On Windows, copy `scripts/start_text_encoder.template.ps1` to a local script and
-fill in your own cache/model directories. Documentation examples use placeholders
-instead of machine-specific paths:
+For local development, copy `.env.example` to `.env.local`, fill in your cache
+and model directories, then start the text encoder through Poe:
 
 ```powershell
-Copy-Item scripts/start_text_encoder.template.ps1 scripts/start_text_encoder.ps1
-.\scripts\start_text_encoder.ps1 -HfHome "<HF_HOME>" -Llm2VecBaseModelPath "<LLAMA_BASE_MODEL_DIR>" -TextEncoderDevice "cuda:0"
+Copy-Item .env.example .env.local
+uv run poe text-encoder
 ```
 
 See [Text Encoder](docs/en/text-encoder.md) for more detail.
@@ -136,42 +135,42 @@ real inference tests. The default layer does not load real models or use CUDA,
 so it is suitable for local development and CI:
 
 ```bash
-uv run --no-sync pytest
+uv run poe test
 ```
 
 This follows the project pytest config and collects every test under `tests/`.
 The server real inference test is collected too, but it does not run during a
-plain `uv run --no-sync pytest`.
+plain `uv run poe test`.
 
 To run only the lightweight server tests:
 
 ```bash
-uv run --no-sync pytest -m "server and not inference"
+uv run poe test-server
 ```
 
 You can also run every test with the `server` marker. The real inference test is
 selected but skipped unless its opt-in environment variable is set:
 
 ```bash
-uv run --no-sync pytest -m server
+uv run poe test-server-all
 ```
 
 Run the real `ModelRuntime` inference smoke test only on a machine with the
-required model, text encoder, and device setup. In PowerShell:
-
-```powershell
-$env:KIMODO_RUN_REAL_RUNTIME = "1"
-uv run --no-sync pytest -m "runtime and inference"
-```
-
-In bash/zsh:
+required model, text encoder, and device setup:
 
 ```bash
-KIMODO_RUN_REAL_RUNTIME=1 uv run --no-sync pytest -m "runtime and inference"
+uv run poe test-runtime-real
 ```
 
-Setting `KIMODO_RUN_REAL_RUNTIME=1` and then running plain
-`uv run --no-sync pytest` is not enough to run real inference; the
+If you want the test process to load the text encoder locally instead of
+probing `TEXT_ENCODER_URL`, use:
+
+```bash
+uv run poe test-runtime-real-local
+```
+
+Setting `KIMODO_RUN_REAL_RUNTIME=1` and then running plain `uv run poe test` is
+not enough to run real inference; the
 `-m "runtime and inference"` marker selection is required too. The real
 inference test uses the text encoder strategy described above. If the text
 encoder, model access, local cache, or device prerequisites are not ready, the

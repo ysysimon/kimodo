@@ -58,6 +58,7 @@ all = [
 
 [dependency-groups]
 dev = [
+  "poethepoet",
   "ruff",
   "pre-commit",
   "pytest",
@@ -121,3 +122,52 @@ line-length = 120
 known-first-party = ["kimodo"]
 known-third-party = ["torch", "numpy", "pytorch_lightning", "wandb", "tqdm"]
 force-sort-within-sections = false
+
+[tool.poe]
+envfile.optional = ".env.local"
+
+[tool.poe.executor]
+type = "uv"
+no-sync = true
+
+[tool.poe.tasks.test]
+help = "Run the default pytest suite."
+cmd = "pytest"
+
+[tool.poe.tasks.test-server]
+help = "Run lightweight server tests without real inference."
+cmd = "pytest -m \"server and not inference\""
+
+[tool.poe.tasks.test-server-all]
+help = "Run all server-marked tests; real inference tests skip unless explicitly enabled."
+cmd = "pytest -m server"
+
+[tool.poe.tasks.test-runtime-real]
+help = "Run the real ModelRuntime inference smoke test."
+cmd = "pytest -m \"runtime and inference\""
+env = { KIMODO_RUN_REAL_RUNTIME = "1" }
+
+[tool.poe.tasks.test-runtime-real-local]
+help = "Run the real ModelRuntime inference smoke test with an in-process text encoder."
+cmd = "pytest -m \"runtime and inference\""
+env = { KIMODO_RUN_REAL_RUNTIME = "1", TEXT_ENCODER_MODE = "local" }
+
+[tool.poe.tasks.lint]
+help = "Run Ruff checks for project code and tests."
+cmd = "ruff check kimodo tests"
+
+[tool.poe.tasks.demo]
+help = "Launch the interactive Kimodo demo."
+cmd = "kimodo_demo"
+
+[tool.poe.tasks.text-encoder]
+help = "Start the local Kimodo text encoder service."
+cmd = "kimodo_textencoder"
+
+[tool.poe.tasks.torch-info]
+help = "Print the installed torch and CUDA runtime status."
+cmd = "python -c \"import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())\""
+
+[tool.poe.tasks.check-import]
+help = "Verify Kimodo and MotionCorrection imports."
+cmd = "python -c \"import kimodo; import motion_correction\""

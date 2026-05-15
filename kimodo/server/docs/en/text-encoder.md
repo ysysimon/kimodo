@@ -40,27 +40,56 @@ You can also build it from environment variables or CLI args.
 `text_encoder_config_from_args()` first reads `TextEncoderServerConfig.from_env()`
 and then applies explicit CLI args on top.
 
+## Local Poe Workflow
+
+For local development, keep machine-specific values in `.env.local` and start
+the text encoder through the project Poe task:
+
+```powershell
+Copy-Item .env.example .env.local
+uv run poe text-encoder
+```
+
+On Linux/macOS, use the same `.env.local` file and run the same Poe task:
+
+```bash
+cp .env.example .env.local
+uv run poe text-encoder
+```
+
+The `text-encoder` task loads optional `.env.local` values and runs
+`kimodo_textencoder`. Extra CLI args are passed through, for example
+`uv run poe text-encoder --fp32`.
+
 ## Environment Variables
 
-| Variable | Purpose |
-| --- | --- |
-| `TEXT_ENCODER_MODE` | Server text encoder mode: `external`, `local`, `managed`, `auto`, or compatibility value `api`. |
-| `TEXT_ENCODER_URL` | Service URL used by `external`, `auto`, and `managed` modes. |
-| `TEXT_ENCODER_FP32` | Whether to use an fp32 text encoder. |
-| `TEXT_ENCODER_DEVICE` | Device for the text encoder, for example `cpu` or `cuda:0`. |
-| `TEXT_ENCODER` | Text encoder name, defaulting to `llm2vec`. |
-| `TEXT_ENCODER_TMP_FOLDER` | Temporary directory used by the managed subprocess. |
-| `GRADIO_SERVER_NAME` | Host for the managed text encoder service. |
-| `GRADIO_SERVER_PORT` | Port for the managed text encoder service; also used by the default URL. |
+Not every text encoder environment variable is active in every mode. First use
+the current mode to decide which variables matter:
+
+| Variable | Main modes | Purpose |
+| --- | --- | --- |
+| `TEXT_ENCODER_MODE` | All | Server text encoder mode: `external`, `local`, `managed`, `auto`, or compatibility value `api`. |
+| `TEXT_ENCODER_URL` | `external`, `auto`, `managed` probe | Service URL. `local` ignores it; `managed` uses it while waiting for the subprocess to become available. |
+| `TEXT_ENCODER_FP32` | `local`, `managed`, direct `kimodo_textencoder` runs | Whether to use an fp32 text encoder. In pure `external` mode, the current process does not use it to load an encoder. |
+| `TEXT_ENCODER_DEVICE` | `local`, `managed`, `auto` fallback | Device for the text encoder, for example `cpu` or `cuda:0`. In pure `external` mode, set it on the process that actually runs the text encoder service. |
+| `TEXT_ENCODER` | `local`, `managed`, direct `kimodo_textencoder` runs | Text encoder name, defaulting to `llm2vec`. In pure `external` mode, the remote service decides which encoder it uses. |
+| `TEXT_ENCODER_TMP_FOLDER` | `managed`, direct `kimodo_textencoder` runs | Directory where the text encoder server writes temporary embedding files. |
+| `GRADIO_SERVER_NAME` | `managed`, direct `kimodo_textencoder` runs | Host for the text encoder service. |
+| `GRADIO_SERVER_PORT` | `managed`, direct `kimodo_textencoder` runs, default URL | Port for the text encoder service; also used to derive the default URL when `TEXT_ENCODER_URL` is unset. |
 
 LLM2Vec-specific variables:
 
-| Variable | Purpose |
-| --- | --- |
-| `LLM2VEC_BASE_MODEL_PATH` | Overrides the LLM2Vec base model path only. It does not override the PEFT model. |
-| `TEXT_ENCODERS_DIR` | Prefixes the default base/PEFT model names with a local root directory. If `LLM2VEC_BASE_MODEL_PATH` is also set, the base model uses `LLM2VEC_BASE_MODEL_PATH`, while the PEFT model still resolves through `TEXT_ENCODERS_DIR`. |
-| `HF_HOME` | Default Hugging Face cache root read by Hugging Face/transformers. |
-| `HUGGINGFACE_CACHE_DIR` | Passed as the transformers cache dir when LLM2Vec loads. |
+| Variable | Main modes | Purpose |
+| --- | --- | --- |
+| `LLM2VEC_BASE_MODEL_PATH` | `local`, `managed`, `auto` fallback | Overrides the LLM2Vec base model path only. It does not override the PEFT model. |
+| `TEXT_ENCODERS_DIR` | `local`, `managed`, `auto` fallback | Prefixes the default base/PEFT model names with a local root directory. If `LLM2VEC_BASE_MODEL_PATH` is also set, the base model uses `LLM2VEC_BASE_MODEL_PATH`, while the PEFT model still resolves through `TEXT_ENCODERS_DIR`. |
+| `HF_HOME` | The process loading LLM2Vec locally | Default Hugging Face cache root read by Hugging Face/transformers. |
+| `HUGGINGFACE_CACHE_DIR` | The process loading LLM2Vec locally | Passed as the transformers cache dir when LLM2Vec loads. |
+
+In pure `external` mode, the current server process only needs
+`TEXT_ENCODER_URL`. If you manually start the external text encoder service on
+the same machine, set `HF_HOME`, `LLM2VEC_BASE_MODEL_PATH`,
+`TEXT_ENCODER_DEVICE`, and related loading variables on that service process.
 
 `LLM2VEC_BASE_MODEL_PATH` is consumed inside `LLM2VecEncoder`: it replaces the
 configured `base_model_name_or_path`, such as the default LLM2Vec base model

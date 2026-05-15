@@ -90,11 +90,11 @@ Text encoder 策略同时影响正式 `ModelRuntime` 服务和 `runtime and infe
 
 `local` 和 `auto` fallback 到 local 时，需要当前环境能加载 LLM2Vec，以及 gated 的 `meta-llama/Meta-Llama-3-8B-Instruct` base model。通常需要 Hugging Face 账号有 gated repo 权限并完成 `hf auth login`，或者用 `LLM2VEC_BASE_MODEL_PATH` 指向本地已有的 base model。PEFT model 仍然来自配置中的 `McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised`，除非通过 `TEXT_ENCODERS_DIR` 提供本地 PEFT 路径。
 
-Windows 上可以复制 `scripts/start_text_encoder.template.ps1` 为本地脚本并填写自己的缓存和模型目录；文档示例只使用占位符：
+本地开发时可以复制 `.env.example` 为 `.env.local`，填写自己的缓存和模型目录，然后通过 Poe 启动 text encoder：
 
 ```powershell
-Copy-Item scripts/start_text_encoder.template.ps1 scripts/start_text_encoder.ps1
-.\scripts\start_text_encoder.ps1 -HfHome "<HF_HOME>" -Llm2VecBaseModelPath "<LLAMA_BASE_MODEL_DIR>" -TextEncoderDevice "cuda:0"
+Copy-Item .env.example .env.local
+uv run poe text-encoder
 ```
 
 更多细节见 [Text Encoder](docs/cn/text-encoder.md)。
@@ -104,37 +104,36 @@ Copy-Item scripts/start_text_encoder.template.ps1 scripts/start_text_encoder.ps1
 server 测试分为默认轻量测试和显式启用的真实推理测试。默认测试不会加载真实模型，不会使用 CUDA，适合本地开发和 CI：
 
 ```bash
-uv run --no-sync pytest
+uv run poe test
 ```
 
-这会按照项目 pytest 配置收集 `tests/` 下的所有测试；server 的真实推理测试也会被收集，但不会在普通 `uv run --no-sync pytest` 中执行。
+这会按照项目 pytest 配置收集 `tests/` 下的所有测试；server 的真实推理测试也会被收集，但不会在普通 `uv run poe test` 中执行。
 
 如果只想运行 server 模块的轻量测试：
 
 ```bash
-uv run --no-sync pytest -m "server and not inference"
+uv run poe test-server
 ```
 
 也可以运行所有带 `server` marker 的测试；其中真实推理测试会在未设置环境变量时自动跳过：
 
 ```bash
-uv run --no-sync pytest -m server
+uv run poe test-server-all
 ```
 
-真实 `ModelRuntime` 推理测试需要在具备模型、text encoder 和设备环境的机器上显式开启。PowerShell 中使用：
-
-```powershell
-$env:KIMODO_RUN_REAL_RUNTIME = "1"
-uv run --no-sync pytest -m "runtime and inference"
-```
-
-bash/zsh 中使用：
+真实 `ModelRuntime` 推理测试需要在具备模型、text encoder 和设备环境的机器上显式开启：
 
 ```bash
-KIMODO_RUN_REAL_RUNTIME=1 uv run --no-sync pytest -m "runtime and inference"
+uv run poe test-runtime-real
 ```
 
-只设置 `KIMODO_RUN_REAL_RUNTIME=1` 后运行普通 `uv run --no-sync pytest` 不会执行真实推理测试；必须同时用 `-m "runtime and inference"` 显式选择这一层。真实推理测试会使用上一节的 text encoder 策略；如果 text encoder、模型权限、模型缓存或设备条件不满足，测试会跳过并提示环境未准备好。
+如果希望测试进程直接在本地加载 text encoder，而不是 probe `TEXT_ENCODER_URL`，可以使用：
+
+```bash
+uv run poe test-runtime-real-local
+```
+
+只设置 `KIMODO_RUN_REAL_RUNTIME=1` 后运行普通 `uv run poe test` 不会执行真实推理测试；必须同时用 `-m "runtime and inference"` 显式选择这一层。真实推理测试会使用上一节的 text encoder 策略；如果 text encoder、模型权限、模型缓存或设备条件不满足，测试会跳过并提示环境未准备好。
 
 真实推理测试专用环境变量：
 
