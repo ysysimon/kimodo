@@ -14,7 +14,7 @@ def import_motion(path: str):
     contract is in place.
     """
     try:
-        import hou  # type: ignore
+        __import__("hou")
     except ImportError as exc:
         raise RuntimeError("import_motion must be called from Houdini hython.") from exc
 

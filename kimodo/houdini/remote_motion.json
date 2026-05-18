@@ -1,0 +1,12 @@
+{
+  "enable": true,
+  "env": [
+    {
+      "REMOTE_MOTION_ROOT": "/path/to/kimodo/kimodo/houdini"
+    },
+    {
+      "PYTHONPATH": "/path/to/kimodo"
+    }
+  ],
+  "hpath": "$REMOTE_MOTION_ROOT"
+}

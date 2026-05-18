@@ -1,5 +1,6 @@
 include setup.py
 recursive-include kimodo/assets *
+recursive-include kimodo/houdini *
 recursive-include MotionCorrection/src *.cpp *.h *.inl
 recursive-include MotionCorrection/python *.py *.dll
 include MotionCorrection/CMakeLists.txt

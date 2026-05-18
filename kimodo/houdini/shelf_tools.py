@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shelf-tool entry points for Houdini integration."""
 
-from .client import KimodoClient
+from remote_motion_client import RemoteMotionClient
 
 
-def submit_generation(prompt: str, *, server_url: str = "http://127.0.0.1:8765"):
+def submit_generation(prompt: str, *, server_url: str = "http://127.0.0.1:8000"):
     """Submit a simple one-prompt generation job from Houdini."""
-    client = KimodoClient(server_url)
-    return client.submit(texts=[prompt], durations=[5.0], formats=["npz"])
+    client = RemoteMotionClient(server_url)
+    return client.submit({"texts": [prompt], "durations": [5.0], "formats": ["bvh"]})

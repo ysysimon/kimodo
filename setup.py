@@ -95,18 +95,19 @@ class CMakeBuild(build_ext):
 
 
 kimodo_packages = find_packages(include=["kimodo", "kimodo.*"])
+remote_motion_client_packages = find_packages(include=["remote_motion_client", "remote_motion_client.*"])
 
 # When set (e.g. in Docker), do not bundle motion_correction here; it is installed
 # separately (e.g. from docker_requirements.txt as ./MotionCorrection) non-editable.
 skip_motion_correction = os.environ.get("SKIP_MOTION_CORRECTION_IN_SETUP", "").strip().lower() in ("1", "true", "yes")
 
 if skip_motion_correction:
-    packages = kimodo_packages
+    packages = kimodo_packages + remote_motion_client_packages
     package_dir = {}
     ext_modules = []
     cmdclass = {}
 else:
-    packages = kimodo_packages + ["motion_correction"]
+    packages = kimodo_packages + remote_motion_client_packages + ["motion_correction"]
     package_dir = {"motion_correction": "MotionCorrection/python/motion_correction"}
     ext_modules = [CMakeExtension("motion_correction._motion_correction", "MotionCorrection")]
     cmdclass = {"build_ext": CMakeBuild}
