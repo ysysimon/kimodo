@@ -115,11 +115,54 @@ uv run poe
 uv run poe torch-info
 uv run poe demo
 uv run poe text-encoder
+uv run poe server
+uv run poe server-fake
 uv run poe check-import
 uv run python kimodo/scripts/lock_requirements.py
 ```
 
 The recommended entry point is the project-locked Poe version: `uv run poe <task>`. If you installed `poethepoet` globally with `pipx` or another tool, you can also run `poe <task>` directly after completing `uv sync`.
+
+## Run the inference server
+
+The real `ModelRuntime` service loads the model and uses the server and text encoder strategy from `.env.local` or the current environment. It listens on `127.0.0.1:8000` by default:
+
+```powershell
+uv run poe server
+```
+
+The server bind address can be set in `.env.local`:
+
+```dotenv
+KIMODO_SERVER_HOST=127.0.0.1
+KIMODO_SERVER_PORT=8000
+```
+
+The Houdini client uses the same variables by default to build `http://<host>:<port>`. If Houdini needs to connect to another machine, save the full URL with the shelf `Configure Server` tool, or set:
+
+```dotenv
+KIMODO_REMOTE_MOTION_SERVER_URL=http://192.168.1.10:8000
+```
+
+To temporarily override the host, port, or other startup options, run the server entry point directly. CLI arguments take precedence over environment variables:
+
+```powershell
+uv run python -m kimodo.scripts.run_server --host 127.0.0.1 --port 8000
+```
+
+For HTTP server/client wiring checks without loading the real model, CUDA, or text encoder, use the fake runtime:
+
+```powershell
+uv run poe server-fake
+```
+
+If you explicitly use `TEXT_ENCODER_MODE=external`, start the text encoder in another terminal first:
+
+```powershell
+uv run poe text-encoder
+```
+
+See `kimodo/server/README.md` for routes, request formats, and text encoder strategy details.
 
 ## Run tests
 
@@ -145,7 +188,8 @@ Then fill in machine-specific values in `.env.local`, for example:
 ```dotenv
 HF_HOME='D:\AI_cache\hf_cache'
 LLM2VEC_BASE_MODEL_PATH='D:\AI_cache\Meta-Llama-3-8B-Instruct'
-TEXT_ENCODER_DEVICE=cpu
+TEXT_ENCODER_MODE=local
+TEXT_ENCODER_DEVICE=cuda:0
 ```
 
 Start the text encoder:
@@ -154,7 +198,7 @@ Start the text encoder:
 uv run poe text-encoder
 ```
 
-`LLM2VEC_BASE_MODEL_PATH` only overrides the LLM2Vec base model path. The PEFT adapter is still resolved from the Hugging Face cache or `TEXT_ENCODERS_DIR`. To reduce VRAM usage, set `TEXT_ENCODER_DEVICE=cpu` in `.env.local`.
+`LLM2VEC_BASE_MODEL_PATH` only overrides the LLM2Vec base model path. The PEFT adapter is still resolved from the Hugging Face cache or `TEXT_ENCODERS_DIR`. Use `TEXT_ENCODER_DEVICE=cuda:0`, `cuda:1`, and so on to choose a CUDA device; to reduce VRAM usage, set `TEXT_ENCODER_DEVICE=cpu` in `.env.local`.
 
 Regenerate the uv lockfile:
 

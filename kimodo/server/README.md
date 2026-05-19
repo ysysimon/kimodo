@@ -77,6 +77,19 @@ app = create_app(
 Start the real server runtime:
 
 ```bash
+uv run poe server
+```
+
+By default it binds to `127.0.0.1:8000`. The bind address can be configured in `.env.local`; CLI arguments override environment variables:
+
+```dotenv
+KIMODO_SERVER_HOST=127.0.0.1
+KIMODO_SERVER_PORT=8000
+```
+
+The Houdini client uses the same variables by default to build `http://<host>:<port>`; use the shelf `Configure Server` tool to save a full URL when the client should connect to another machine.
+
+```bash
 uv run python -m kimodo.scripts.run_server --host 127.0.0.1 --port 8000
 ```
 
@@ -87,10 +100,9 @@ encoder, use `FakeRuntime`:
 uv run python -m kimodo.scripts.run_server --runtime fake --storage-root outputs/server-smoke
 ```
 
-Equivalent Poe tasks are available:
+An equivalent Poe task is available for smoke checks:
 
 ```bash
-uv run poe server
 uv run poe server-fake
 ```
 
@@ -119,10 +131,10 @@ loading a Kimodo model.
 
 Common modes:
 
-- `TEXT_ENCODER_MODE=external`: connect to an already-running text encoder
-  service and probe `TEXT_ENCODER_URL`. This is the server runtime default.
 - `TEXT_ENCODER_MODE=local`: load the LLM2Vec text encoder inside the current
-  process.
+  process. This is the server runtime default.
+- `TEXT_ENCODER_MODE=external`: connect to an already-running text encoder
+  service and probe `TEXT_ENCODER_URL`.
 - `TEXT_ENCODER_MODE=managed`: let the server runtime start and manage a text
   encoder subprocess.
 - `TEXT_ENCODER_MODE=auto`: try `external` first; if unavailable, fall back to
@@ -134,7 +146,8 @@ Important environment variables:
   when unset, the default URL is derived from `GRADIO_SERVER_PORT`.
 - `GRADIO_SERVER_NAME`, `GRADIO_SERVER_PORT`: host/port used by a managed text
   encoder subprocess.
-- `TEXT_ENCODER_DEVICE`: text encoder device, for example `cpu` or `cuda:0`.
+- `TEXT_ENCODER_DEVICE`: text encoder device, for example `cpu`, `cuda:0`, or
+  `cuda:1`.
 - `TEXT_ENCODER_FP32`: whether to use an fp32 text encoder.
 - `TEXT_ENCODER`: text encoder preset, currently defaulting to `llm2vec`.
 - `TEXT_ENCODER_TMP_FOLDER`: temporary directory used by the managed text

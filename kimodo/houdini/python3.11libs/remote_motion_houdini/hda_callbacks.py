@@ -10,13 +10,14 @@ from typing import Any
 from remote_motion_client import RemoteMotionClient
 
 from .cache import default_download_dir
+from .config import get_server_url
 from .importer import refresh_mocap_import
 
 
 def generate_motion(kwargs: dict[str, Any]) -> Path:
     """Generate one BVH motion from HDA parms and import it into the node."""
     node = kwargs["node"]
-    server_url = _eval_parm(node, "server_url", "http://127.0.0.1:8000")
+    server_url = _eval_parm(node, "server_url", None) or get_server_url()
     prompt = _eval_parm(node, "prompt", "")
     duration = float(_eval_parm(node, "duration", 5.0))
     seed = _eval_parm(node, "seed", None)

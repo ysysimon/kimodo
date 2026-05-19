@@ -191,6 +191,24 @@ def test_run_server_cli_builds_fake_runtime_app(monkeypatch, tmp_path):
     assert isinstance(calls[0]["app"].state.runtime, FakeRuntime)
 
 
+def test_run_server_cli_uses_host_and_port_from_env(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_uvicorn_run(app, *, host: str, port: int) -> None:
+        calls.append({"app": app, "host": host, "port": port})
+
+    monkeypatch.setattr("kimodo.scripts.run_server.uvicorn.run", fake_uvicorn_run)
+    monkeypatch.setenv("KIMODO_SERVER_HOST", "0.0.0.0")
+    monkeypatch.setenv("KIMODO_SERVER_PORT", "9002")
+
+    run_server_main(["--runtime", "fake", "--storage-root", str(tmp_path)])
+
+    assert len(calls) == 1
+    assert calls[0]["host"] == "0.0.0.0"
+    assert calls[0]["port"] == 9002
+    assert isinstance(calls[0]["app"].state.runtime, FakeRuntime)
+
+
 class BlockingRuntime:
     def __init__(self, release_event: Event) -> None:
         self.release_event = release_event

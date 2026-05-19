@@ -115,11 +115,54 @@ uv run poe
 uv run poe torch-info
 uv run poe demo
 uv run poe text-encoder
+uv run poe server
+uv run poe server-fake
 uv run poe check-import
 uv run python kimodo/scripts/lock_requirements.py
 ```
 
 推荐使用项目锁定的 `poe` 版本，即 `uv run poe <task>`。如果你已经用 `pipx` 或其他方式全局安装了 `poethepoet`，也可以在完成 `uv sync` 后直接运行 `poe <task>`。
+
+## 运行推理服务
+
+真实 `ModelRuntime` 服务会加载模型，并按 `.env.local` 或当前环境变量中的服务端和 text encoder 策略启动。默认监听 `127.0.0.1:8000`：
+
+```powershell
+uv run poe server
+```
+
+服务端监听地址可以写在 `.env.local` 中：
+
+```dotenv
+KIMODO_SERVER_HOST=127.0.0.1
+KIMODO_SERVER_PORT=8000
+```
+
+Houdini 客户端默认也会使用这两个变量拼出 `http://<host>:<port>`。如果 Houdini 需要连接另一台机器，推荐在 shelf 的 `Configure Server` 中保存完整 URL，或设置：
+
+```dotenv
+KIMODO_REMOTE_MOTION_SERVER_URL=http://192.168.1.10:8000
+```
+
+如果需要临时覆盖 host、port 或其他参数，可以直接运行 server entrypoint；CLI 参数优先级高于环境变量：
+
+```powershell
+uv run python -m kimodo.scripts.run_server --host 127.0.0.1 --port 8000
+```
+
+只想检查 HTTP server/client wiring，不加载真实模型、CUDA 或 text encoder 时，使用 fake runtime：
+
+```powershell
+uv run poe server-fake
+```
+
+如果显式使用 `TEXT_ENCODER_MODE=external`，需要先在另一个终端启动 text encoder：
+
+```powershell
+uv run poe text-encoder
+```
+
+更多 route、请求格式和 text encoder 策略见 `kimodo/server/README_cn.md`。
 
 ## 运行测试
 
@@ -145,7 +188,8 @@ Copy-Item .env.example .env.local
 ```dotenv
 HF_HOME='D:\AI_cache\hf_cache'
 LLM2VEC_BASE_MODEL_PATH='D:\AI_cache\Meta-Llama-3-8B-Instruct'
-TEXT_ENCODER_DEVICE=cpu
+TEXT_ENCODER_MODE=local
+TEXT_ENCODER_DEVICE=cuda:0
 ```
 
 启动 text encoder：
@@ -154,7 +198,7 @@ TEXT_ENCODER_DEVICE=cpu
 uv run poe text-encoder
 ```
 
-`LLM2VEC_BASE_MODEL_PATH` 只覆盖 LLM2Vec 的 base model 路径；PEFT adapter 仍按 Hugging Face cache 或 `TEXT_ENCODERS_DIR` 查找。如果希望降低显存占用，可以在 `.env.local` 中设置 `TEXT_ENCODER_DEVICE=cpu`。
+`LLM2VEC_BASE_MODEL_PATH` 只覆盖 LLM2Vec 的 base model 路径；PEFT adapter 仍按 Hugging Face cache 或 `TEXT_ENCODERS_DIR` 查找。可以用 `TEXT_ENCODER_DEVICE=cuda:0`、`cuda:1` 等指定 CUDA 设备；如果希望降低显存占用，可以在 `.env.local` 中设置 `TEXT_ENCODER_DEVICE=cpu`。
 
 重新生成 uv 锁文件:
 

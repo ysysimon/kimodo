@@ -71,7 +71,7 @@ the current mode to decide which variables matter:
 | `TEXT_ENCODER_MODE` | All | Server text encoder mode: `external`, `local`, `managed`, `auto`, or compatibility value `api`. |
 | `TEXT_ENCODER_URL` | `external`, `auto`, `managed` probe | Service URL. `local` ignores it; `managed` uses it while waiting for the subprocess to become available. |
 | `TEXT_ENCODER_FP32` | `local`, `managed`, direct `kimodo_textencoder` runs | Whether to use an fp32 text encoder. In pure `external` mode, the current process does not use it to load an encoder. |
-| `TEXT_ENCODER_DEVICE` | `local`, `managed`, `auto` fallback | Device for the text encoder, for example `cpu` or `cuda:0`. In pure `external` mode, set it on the process that actually runs the text encoder service. |
+| `TEXT_ENCODER_DEVICE` | `local`, `managed`, `auto` fallback | Device for the text encoder, for example `cpu`, `cuda:0`, or `cuda:1`. In pure `external` mode, set it on the process that actually runs the text encoder service. |
 | `TEXT_ENCODER` | `local`, `managed`, direct `kimodo_textencoder` runs | Text encoder name, defaulting to `llm2vec`. In pure `external` mode, the remote service decides which encoder it uses. |
 | `TEXT_ENCODER_TMP_FOLDER` | `managed`, direct `kimodo_textencoder` runs | Directory where the text encoder server writes temporary embedding files. |
 | `GRADIO_SERVER_NAME` | `managed`, direct `kimodo_textencoder` runs | Host for the text encoder service. |

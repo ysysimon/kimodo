@@ -20,7 +20,7 @@ TextEncoderMode = Literal["external", "local", "managed", "auto"]
 class TextEncoderServerConfig:
     """Server-level text encoder startup strategy."""
 
-    mode: TextEncoderMode = "external"
+    mode: TextEncoderMode = "local"
     url: str = "http://127.0.0.1:9550/"
     host: str = "127.0.0.1"
     port: int = 9550
@@ -32,7 +32,7 @@ class TextEncoderServerConfig:
 
     @classmethod
     def from_env(cls) -> "TextEncoderServerConfig":
-        mode = _normalize_text_encoder_mode(os.environ.get("TEXT_ENCODER_MODE", "external"))
+        mode = _normalize_text_encoder_mode(os.environ.get("TEXT_ENCODER_MODE", "local"))
         port = int(os.environ.get("GRADIO_SERVER_PORT", "9550"))
         return cls(
             mode=mode,
@@ -40,7 +40,7 @@ class TextEncoderServerConfig:
             host=os.environ.get("GRADIO_SERVER_NAME", "127.0.0.1"),
             port=port,
             fp32=_env_flag("TEXT_ENCODER_FP32"),
-            device=os.environ.get("TEXT_ENCODER_DEVICE") or None,
+            device=_normalize_text_encoder_device(os.environ.get("TEXT_ENCODER_DEVICE")),
             text_encoder=os.environ.get("TEXT_ENCODER", "llm2vec"),
             tmp_folder=os.environ.get("TEXT_ENCODER_TMP_FOLDER", "/tmp/text_encoder/"),
         )
@@ -52,7 +52,7 @@ def add_text_encoder_args(parser: argparse.ArgumentParser) -> argparse.ArgumentP
         "--text-encoder-mode",
         choices=["external", "local", "managed", "auto"],
         default=None,
-        help="Server text encoder strategy. Defaults to TEXT_ENCODER_MODE or external.",
+        help="Server text encoder strategy. Defaults to TEXT_ENCODER_MODE or local.",
     )
     parser.add_argument(
         "--text-encoder-url",
@@ -78,7 +78,7 @@ def add_text_encoder_args(parser: argparse.ArgumentParser) -> argparse.ArgumentP
     parser.add_argument(
         "--text-encoder-device",
         default=None,
-        help="Override TEXT_ENCODER_DEVICE, for example cpu or cuda:0.",
+        help="Override TEXT_ENCODER_DEVICE, for example cpu, cuda:0, or cuda:1.",
     )
     return parser
 
@@ -99,7 +99,7 @@ def text_encoder_config_from_args(args: argparse.Namespace) -> TextEncoderServer
         host=args.text_encoder_host or base.host,
         port=port,
         fp32=bool(args.text_encoder_fp32 or base.fp32),
-        device=args.text_encoder_device if args.text_encoder_device is not None else base.device,
+        device=_normalize_text_encoder_device(args.text_encoder_device) if args.text_encoder_device is not None else base.device,
         text_encoder=base.text_encoder,
         tmp_folder=base.tmp_folder,
         startup_timeout_seconds=base.startup_timeout_seconds,
@@ -251,3 +251,12 @@ def _normalize_text_encoder_mode(mode: str) -> TextEncoderMode:
             f"{mode!r}. Expected one of external, local, managed, auto."
         )
     return normalized  # type: ignore[return-value]
+
+
+def _normalize_text_encoder_device(device: str | None) -> str | None:
+    if not device:
+        return None
+    normalized = device.strip().lower()
+    if normalized == "gpu":
+        return "cuda:0"
+    return device

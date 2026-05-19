@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+  <!-- This file contains definitions of shelves, toolbars, and tools.
+ It should not be hand-edited when it is being used by the application.
+ Note, that two definitions of the same element are not allowed in
+ a single file. -->
+
+  <toolshelf name="kimodo_remote_motion" label="Kimodo Remote Motion">
+    <memberTool name="generate_mocap_import"/>
+    <memberTool name="configure_kimodo_server"/>
+  </toolshelf>
+
+  <tool name="generate_mocap_import" label="Generate Mocap Import" icon="$HFS/houdini/pic/minimizedicon.pic">
+    <helpText><![CDATA[Generate a Kimodo motion, download the BVH, and create a standalone Mocap Import node.]]></helpText>
+    <toolMenuContext name="viewer">
+      <contextNetType>OBJ</contextNetType>
+      <contextNetType>SOP</contextNetType>
+    </toolMenuContext>
+    <toolMenuContext name="network">
+      <contextNetType>OBJ</contextNetType>
+      <contextNetType>SOP</contextNetType>
+    </toolMenuContext>
+    <script scriptType="python">
+      <![CDATA[from remote_motion_houdini.shelf_tools import prompt_submit_generation
+
+prompt_submit_generation()
+]]>
+    </script>
+  </tool>
+  <tool name="configure_kimodo_server" label="Configure Server" icon="$HFS/houdini/pic/minimizedicon.pic">
+    <helpText><![CDATA[Configure the Kimodo backend URL used by Houdini client tools.]]></helpText>
+    <toolMenuContext name="viewer">
+      <contextNetType>OBJ</contextNetType>
+      <contextNetType>SOP</contextNetType>
+    </toolMenuContext>
+    <toolMenuContext name="network">
+      <contextNetType>OBJ</contextNetType>
+      <contextNetType>SOP</contextNetType>
+    </toolMenuContext>
+    <script scriptType="python">
+      <![CDATA[from remote_motion_houdini.shelf_tools import configure_server
+
+configure_server()
+]]>
+    </script>
+  </tool>
+</shelfDocument>

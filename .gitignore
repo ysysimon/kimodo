@@ -165,3 +165,7 @@ onelogger.err
 
 # uv
 .uv-cache
+
+# houdini
+/kimodo/houdini/example/backup
+/kimodo/houdini/example/motion_gen

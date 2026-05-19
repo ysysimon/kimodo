@@ -58,7 +58,7 @@ uv run poe text-encoder
 | `TEXT_ENCODER_MODE` | 全部 | server text encoder 模式：`external`、`local`、`managed`、`auto` 或兼容值 `api`。 |
 | `TEXT_ENCODER_URL` | `external`、`auto`、`managed` probe | service URL。`local` 不使用它；`managed` 会用它等待 subprocess 可用。 |
 | `TEXT_ENCODER_FP32` | `local`、`managed`、直接启动 `kimodo_textencoder` | 是否使用 fp32 text encoder。纯 `external` 时，当前进程不会用它加载 encoder。 |
-| `TEXT_ENCODER_DEVICE` | `local`、`managed`、`auto` fallback | text encoder 使用的 device，例如 `cpu` 或 `cuda:0`。纯 `external` 时，应在实际运行 text encoder service 的进程中设置。 |
+| `TEXT_ENCODER_DEVICE` | `local`、`managed`、`auto` fallback | text encoder 使用的 device，例如 `cpu`、`cuda:0` 或 `cuda:1`。纯 `external` 时，应在实际运行 text encoder service 的进程中设置。 |
 | `TEXT_ENCODER` | `local`、`managed`、直接启动 `kimodo_textencoder` | text encoder 名称，默认 `llm2vec`。纯 `external` 时，远端服务使用哪个 encoder 由远端进程决定。 |
 | `TEXT_ENCODER_TMP_FOLDER` | `managed`、直接启动 `kimodo_textencoder` | text encoder server 写临时 embedding 文件的目录。 |
 | `GRADIO_SERVER_NAME` | `managed`、直接启动 `kimodo_textencoder` | text encoder service host。 |

@@ -71,6 +71,19 @@ app = create_app(
 启动真实 runtime 服务：
 
 ```bash
+uv run poe server
+```
+
+默认监听 `127.0.0.1:8000`。可以在 `.env.local` 中配置服务端监听地址；CLI 参数会覆盖环境变量：
+
+```dotenv
+KIMODO_SERVER_HOST=127.0.0.1
+KIMODO_SERVER_PORT=8000
+```
+
+Houdini 客户端默认也会使用这两个变量拼出 `http://<host>:<port>`；如果客户端要连接另一台机器，可以通过 shelf 的 `Configure Server` 保存完整 URL。
+
+```bash
 uv run python -m kimodo.scripts.run_server --host 127.0.0.1 --port 8000
 ```
 
@@ -80,10 +93,9 @@ uv run python -m kimodo.scripts.run_server --host 127.0.0.1 --port 8000
 uv run python -m kimodo.scripts.run_server --runtime fake --storage-root outputs/server-smoke
 ```
 
-也可以使用 Poe task：
+也可以使用 Poe task 做 smoke check：
 
 ```bash
-uv run poe server
 uv run poe server-fake
 ```
 
@@ -105,8 +117,8 @@ Text encoder 策略同时影响正式 `ModelRuntime` 服务和 `runtime and infe
 
 常用模式：
 
-- `TEXT_ENCODER_MODE=external`：连接已经运行的 text encoder service，并检查 `TEXT_ENCODER_URL`。这是 server runtime 的默认模式。
-- `TEXT_ENCODER_MODE=local`：在当前进程内加载 LLM2Vec text encoder。
+- `TEXT_ENCODER_MODE=local`：在当前进程内加载 LLM2Vec text encoder。这是 server runtime 的默认模式。
+- `TEXT_ENCODER_MODE=external`：连接已经运行的 text encoder service，并检查 `TEXT_ENCODER_URL`。
 - `TEXT_ENCODER_MODE=managed`：由 server runtime 启动并管理一个 text encoder subprocess。
 - `TEXT_ENCODER_MODE=auto`：先尝试 external；如果 external 不可用，回退到 local。
 
@@ -114,7 +126,7 @@ Text encoder 策略同时影响正式 `ModelRuntime` 服务和 `runtime and infe
 
 - `TEXT_ENCODER_URL`：external/auto/managed 使用的 service URL；未设置时默认使用 `GRADIO_SERVER_PORT` 组成本机 URL。
 - `GRADIO_SERVER_NAME`、`GRADIO_SERVER_PORT`：managed subprocess 启动 text encoder service 时使用的 host/port。
-- `TEXT_ENCODER_DEVICE`：text encoder 使用的设备，例如 `cpu` 或 `cuda:0`。
+- `TEXT_ENCODER_DEVICE`：text encoder 使用的设备，例如 `cpu`、`cuda:0` 或 `cuda:1`。
 - `TEXT_ENCODER_FP32`：是否使用 fp32 text encoder。
 - `TEXT_ENCODER`：text encoder preset，当前默认是 `llm2vec`。
 - `TEXT_ENCODER_TMP_FOLDER`：managed text encoder subprocess 使用的临时目录。

@@ -56,6 +56,24 @@ def test_local_text_encoder_mode_sets_local_env(monkeypatch):
     ]
 
 
+def test_text_encoder_config_defaults_to_local(monkeypatch):
+    monkeypatch.delenv("TEXT_ENCODER_MODE", raising=False)
+    monkeypatch.delenv("TEXT_ENCODER_DEVICE", raising=False)
+
+    config = TextEncoderServerConfig.from_env()
+
+    assert config.mode == "local"
+    assert config.device is None
+
+
+def test_text_encoder_config_keeps_cuda_device(monkeypatch):
+    monkeypatch.setenv("TEXT_ENCODER_DEVICE", "cuda:1")
+
+    config = TextEncoderServerConfig.from_env()
+
+    assert config.device == "cuda:1"
+
+
 def test_external_text_encoder_mode_sets_api_env_and_probes(monkeypatch):
     probes = []
 
