@@ -109,12 +109,39 @@ converts each duration into model frames with `duration * model.fps`.
 Classifier-free guidance supports these combinations:
 
 - `cfg_type="nocfg"`: disable CFG. `cfg_weight` must not be passed.
-- `cfg_type="regular"`: standard CFG. `cfg_weight` must be one number.
+- `cfg_type="regular"`: standard CFG. `cfg_weight` must be one number. It is
+  the guidance scale that pushes the denoising prediction toward the
+  text-and-constraint conditional prediction. `0` is close to unconditional
+  prediction, `1` uses the conditional prediction, and values greater than `1`
+  strengthen prompt/constraint influence at the risk of less natural motion.
 - `cfg_type="separated"`: separate text and constraint CFG. `cfg_weight` must be
   `[text_weight, constraint_weight]`.
 - `cfg_type=None` and `cfg_weight=None`: use the model's default CFG settings.
 - `cfg_type=None` with only `cfg_weight`: the runtime infers CFG type from the
   shape of `cfg_weight`.
+
+The single `regular` weight and the `separated` `text_weight` /
+`constraint_weight` values are guidance scales, not probabilities or ratios.
+They do not need to add up to `1`. For example, `[2.0, 2.0]` and `[2.0, 4.0]`
+are both meaningful settings for independent text and constraint guidance
+strengths.
+
+A weight of `0` disables the extra guidance from that condition relative to the
+unconditional prediction. With `separated`, `[0.0, 2.0]` disables text guidance
+and keeps constraint guidance, `[2.0, 0.0]` keeps text guidance and disables
+constraint guidance, and `[0.0, 0.0]` is close to unconditional generation.
+
+Negative weights are not recommended. A negative value does not simply weaken a
+condition; it pushes the prediction away from that condition and can reduce
+prompt/constraint adherence or produce unstable motion.
+
+When no external `constraints` are provided, `constraint_weight` does not always
+need to be `0`. For a single text-only prompt there is no active constraint
+mask, so constraint guidance usually has no practical constraint effect.
+However, multi-prompt generation creates internal transition constraints between
+adjacent segments, and `constraint_weight` still affects those transitions. The
+default `[2.0, 2.0]` is therefore also valid for multi-prompt requests without
+external constraints.
 
 ### `formats`, `num_samples`, and `zip_output`
 

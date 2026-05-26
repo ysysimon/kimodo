@@ -1,3 +1,0 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 ysysimon. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-"""Houdini package files for Kimodo remote motion integration."""

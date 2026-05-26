@@ -6,8 +6,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_FILE_PARMS = ("file", "filename", "filepath", "clip", "source")
+_FILE_PARMS = ("bvhfile", "file", "filename", "filepath", "clip", "source")
 _RELOAD_PARMS = ("reload", "reloadfile")
+
+
+def format_houdini_path(path: str | Path) -> str:
+    """Return a Houdini-friendly path, preferring $HIP-relative POSIX text."""
+    artifact = Path(path)
+    try:
+        import hou  # type: ignore
+
+        hip = hou.expandString("$HIP")
+    except Exception:
+        hip = ""
+
+    if hip:
+        try:
+            relative_path = artifact.resolve().relative_to(Path(hip).resolve())
+        except ValueError:
+            pass
+        else:
+            return "$HIP/" + relative_path.as_posix()
+
+    return artifact.as_posix()
 
 
 def refresh_mocap_import(node, artifact_path: str | Path, child_name: str = "mocap_import_bvh") -> bool:
@@ -25,7 +46,7 @@ def refresh_mocap_import(node, artifact_path: str | Path, child_name: str = "moc
     if mocap is None:
         return False
 
-    path_text = str(Path(artifact_path))
+    path_text = format_houdini_path(artifact_path)
     for parm_name in _FILE_PARMS:
         parm = mocap.parm(parm_name)
         if parm is not None:
