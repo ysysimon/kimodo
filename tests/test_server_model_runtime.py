@@ -117,6 +117,7 @@ def test_model_runtime_generate_maps_request_to_model_and_exports(monkeypatch, t
             "fps": 30.0,
             "device": "cpu",
             "job_id": "job-1",
+            "standard_tpose": True,
         }
     ]
     assert export_calls["zip"] == [
@@ -128,6 +129,34 @@ def test_model_runtime_generate_maps_request_to_model_and_exports(monkeypatch, t
     ]
     assert set(result.artifacts) == {"zip"}
     assert result.artifacts["zip"].download_url == "/jobs/job-1/artifacts/zip"
+
+
+def test_model_runtime_generate_forwards_bvh_standard_tpose_false(monkeypatch, tmp_path):
+    runtime, model = _runtime_with_model("kimodo-soma-rp", skeleton_name="somaskel30")
+    export_calls = _patch_exports(monkeypatch)
+
+    runtime.generate(
+        GenerationRequest(
+            texts=["walk"],
+            durations=[1.0],
+            model="kimodo-soma-rp",
+            formats=["bvh"],
+            bvh_standard_tpose=False,
+        ),
+        job_dir=tmp_path,
+    )
+
+    assert export_calls["bvh"] == [
+        {
+            "artifacts_dir": tmp_path / "artifacts",
+            "motion": model.output,
+            "skeleton": model.skeleton,
+            "fps": 30.0,
+            "device": "cpu",
+            "job_id": None,
+            "standard_tpose": False,
+        }
+    ]
 
 
 def test_model_runtime_generate_preserves_soma_postprocess(monkeypatch, tmp_path):
@@ -222,6 +251,7 @@ def _patch_exports(monkeypatch):
                 "fps": fps,
                 "device": device,
                 "job_id": job_id,
+                "standard_tpose": standard_tpose,
             }
         )
         return {"bvh": _artifact("bvh", job_id=job_id)}

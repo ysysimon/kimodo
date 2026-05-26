@@ -153,6 +153,7 @@ class ModelRuntime:
                     fps=model.fps,
                     device=self.device,
                     job_id=request.job_id,
+                    standard_tpose=request.bvh_standard_tpose,
                 )
             )
 

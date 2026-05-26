@@ -69,6 +69,28 @@ def test_submit_rejects_client_job_id(tmp_path):
     assert response.status_code == 422
 
 
+def test_submit_accepts_bvh_standard_tpose(tmp_path):
+    runtime = CapturingRuntime()
+    app = create_fastapi_app(storage_root=str(tmp_path), runtime=runtime)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/jobs",
+            json={
+                "texts": ["A person walks forward."],
+                "durations": [1.0],
+                "formats": ["bvh"],
+                "bvh_standard_tpose": False,
+            },
+        )
+        assert response.status_code == 202
+        submitted = response.json()
+        _wait_for_status(client, submitted["job_id"], JobStatus.SUCCEEDED)
+
+    assert len(runtime.requests) == 1
+    assert runtime.requests[0].bvh_standard_tpose is False
+
+
 def test_download_artifact_returns_file(tmp_path):
     app = create_fastapi_app(storage_root=str(tmp_path), runtime=FakeRuntime())
 
@@ -215,6 +237,15 @@ class BlockingRuntime:
 
     def generate(self, request: GenerationRequest, *, job_dir: str | Path) -> GenerationResult:
         self.release_event.wait(timeout=5)
+        return GenerationResult(job_id=request.job_id)
+
+
+class CapturingRuntime:
+    def __init__(self) -> None:
+        self.requests: list[GenerationRequest] = []
+
+    def generate(self, request: GenerationRequest, *, job_dir: str | Path) -> GenerationResult:
+        self.requests.append(request)
         return GenerationResult(job_id=request.job_id)
 
 

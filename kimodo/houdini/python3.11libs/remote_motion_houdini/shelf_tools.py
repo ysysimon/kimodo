@@ -16,6 +16,8 @@ from .config import get_server_url, normalize_server_url, set_server_url
 _FILETYPE_PARM = "filetype"
 _FILETYPE_BIOVISION_VALUE = "biovision"
 _BVH_FILE_PARM = "bvhfile"
+_SCALE_PARM = "scale"
+_DEFAULT_IMPORT_SCALE = 0.01
 _DEFAULT_DURATION = 5.0
 _SERVER_DEFAULT_MODEL_LABEL = "Server default"
 _RELOAD_PARMS = ("reload", "reloadfile")
@@ -74,6 +76,7 @@ def create_mocap_import_node(artifact_path: str | Path, prompt: str | None = Non
     mocap = _create_first_available_node(geo, _MOCAP_IMPORT_NODE_TYPES, "mocap_import")
     _set_required_parm(mocap, _FILETYPE_PARM, _FILETYPE_BIOVISION_VALUE)
     _set_required_parm(mocap, _BVH_FILE_PARM, _as_hip_relative_path(artifact_path, hou))
+    _set_required_parm(mocap, _SCALE_PARM, _DEFAULT_IMPORT_SCALE)
     _press_first_existing_button(mocap, _RELOAD_PARMS)
 
     _set_display_flags(mocap)
@@ -292,7 +295,7 @@ def _create_named_node(parent, node_type: str, node_name: str):
     return node
 
 
-def _set_required_parm(node, parm_name: str, value: str) -> None:
+def _set_required_parm(node, parm_name: str, value: Any) -> None:
     parm = node.parm(parm_name)
     if parm is None:
         raise RuntimeError(

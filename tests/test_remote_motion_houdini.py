@@ -309,6 +309,7 @@ def test_shelf_create_mocap_import_node_sets_downloaded_path(monkeypatch, tmp_pa
     assert mocap.type_name == "mocapimport"
     assert mocap.parm("filetype").value == "biovision"
     assert mocap.parm("bvhfile").value == "$HIP/motion_gen/job-1/motion.bvh"
+    assert mocap.parm("scale").value == 0.01
     assert mocap.parm("reload").pressed is True
     assert mocap.display_flag is True
     assert mocap.render_flag is True
@@ -454,7 +455,7 @@ class FakeHouNode:
         self.render_flag = False
         self.current = False
         parm_defs = self.mocap_parm_defs if type_name.startswith("mocap") and self.mocap_parm_defs else None
-        default_parms = {"filetype": "File Type", "bvhfile": "BVH File", "reload": "Reload"}
+        default_parms = {"filetype": "File Type", "bvhfile": "BVH File", "scale": "Scale", "reload": "Reload"}
         self._parms = {name: FakeParm("", name, label) for name, label in (parm_defs or default_parms).items()}
 
     def createNode(self, type_name: str, node_name: str | None = None) -> "FakeHouNode":

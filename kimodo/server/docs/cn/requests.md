@@ -17,6 +17,7 @@
   "num_transition_frames": 5,
   "first_heading_angle": 0.0,
   "formats": ["npz", "bvh"],
+  "bvh_standard_tpose": true,
   "zip_output": false,
   "postprocess": true,
   "root_margin": 0.04,
@@ -83,6 +84,7 @@
 | `num_transition_frames` | `int` | `5` | 否 | 多段 prompt 之间的过渡重叠帧数。 |
 | `first_heading_angle` | `float \| list[float] \| None` | `None` | 否 | 初始身体朝向，单位是 radians。 |
 | `formats` | `list[str]` | `["npz", "bvh"]` | 否 | 要导出的 artifact 格式。 |
+| `bvh_standard_tpose` | `bool` | `True` | 否 | 导出 BVH 时，是否使用 standard T-pose rest skeleton。 |
 | `zip_output` | `bool` | `False` | 否 | 是否把 artifact 打成一个 zip。 |
 | `postprocess` | `bool` | `True` | 否 | 是否启用 motion post-processing。 |
 | `root_margin` | `float` | `0.04` | 否 | post-processing 的 root margin，单位是米。 |
@@ -117,6 +119,8 @@ Classifier-free guidance 支持以下组合：
 
 - `npz`：Kimodo NPZ。单 sample 返回 `npz`；多 sample 返回 `npz_00`、`npz_01` 等。
 - `bvh`：SOMA BVH。单 sample 返回 `bvh`；多 sample 返回 `bvh_00`、`bvh_01` 等。G1 或 SMPL-X 模型会跳过 BVH artifact，job 仍可成功。
+
+`bvh_standard_tpose` 控制 BVH 的 rest pose。默认值 `true` 会用 Kimodo standard T-pose rest skeleton 导出 BVH；传 `false` 时会使用 BONES-SEED 兼容的 rest pose。
 
 当 `zip_output=true` 且已有 artifact 时，response 只返回一个 `zip` artifact，文件名为 `artifacts.zip`。
 

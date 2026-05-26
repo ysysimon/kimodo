@@ -37,6 +37,7 @@ class GenerationRequestBody(BaseModel):
     num_transition_frames: int = 5
     first_heading_angle: float | list[float] | None = None
     formats: list[str] = Field(default_factory=lambda: ["npz", "bvh"])
+    bvh_standard_tpose: bool = True
     zip_output: bool = False
     postprocess: bool = True
     root_margin: float = 0.04

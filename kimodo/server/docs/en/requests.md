@@ -19,6 +19,7 @@ other fields are global settings for the whole job.
   "num_transition_frames": 5,
   "first_heading_angle": 0.0,
   "formats": ["npz", "bvh"],
+  "bvh_standard_tpose": true,
   "zip_output": false,
   "postprocess": true,
   "root_margin": 0.04,
@@ -86,6 +87,7 @@ into one zip:
 | `num_transition_frames` | `int` | `5` | No | Overlap frames used between multiple prompt segments. |
 | `first_heading_angle` | `float \| list[float] \| None` | `None` | No | Initial body heading angle in radians. |
 | `formats` | `list[str]` | `["npz", "bvh"]` | No | Global artifact formats to export for this job. |
+| `bvh_standard_tpose` | `bool` | `True` | No | If exporting BVH, use the standard T-pose rest skeleton. |
 | `zip_output` | `bool` | `False` | No | Whether to package artifacts into one zip file. |
 | `postprocess` | `bool` | `True` | No | Whether to enable motion post-processing. |
 | `root_margin` | `float` | `0.04` | No | Root margin for post-processing, in meters. |
@@ -132,6 +134,10 @@ Currently supported formats:
 - `bvh`: SOMA BVH. A single sample returns `bvh`; multiple samples return
   `bvh_00`, `bvh_01`, and so on. G1 or SMPL-X models skip BVH artifacts while
   allowing the job to succeed.
+
+`bvh_standard_tpose` controls the BVH rest pose. The default `true` exports BVH
+with Kimodo's standard T-pose rest skeleton. Set it to `false` to export with
+the BONES-SEED-compatible rest pose.
 
 When `zip_output=true` and artifacts were generated, the response contains only
 one `zip` artifact named `artifacts.zip`.

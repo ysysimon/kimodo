@@ -69,7 +69,7 @@ def save_bvh_artifacts(
     fps: float,
     device: str | torch.device,
     job_id: str | None = None,
-    standard_tpose: bool = False,
+    standard_tpose: bool = True,
 ) -> dict[str, ArtifactRecord]:
     """Save SOMA motion as BVH.
 

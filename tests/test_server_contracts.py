@@ -29,6 +29,7 @@ def test_generation_request_to_dict_preserves_defaults():
     assert data["diffusion_steps"] == 100
     assert data["num_samples"] == 1
     assert data["formats"] == ["npz", "bvh"]
+    assert data["bvh_standard_tpose"] is True
     assert data["zip_output"] is False
     assert data["postprocess"] is True
 
