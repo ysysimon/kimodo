@@ -183,5 +183,285 @@ post-processing, in meters. It mainly matters for constrained generation.
 unconstrained generation. If provided, it can be a constraints JSON file path or
 a JSON-compatible constraint dict list accepted by `load_constraints_lst`.
 
-Before a concrete HTTP adapter lands, this should not be treated as a stable
-HTTP wire format.
+This field remains advanced/experimental. Treat the format below as the current
+server-supported request shape, not as a long-term stable public protocol.
+
+## Constraints Request Format
+
+For HTTP requests, prefer passing `constraints` as a JSON-compatible list
+directly in the `POST /jobs` body rather than as a client-local file path. Each
+list item is one constraint set object and must include at least `type` and
+`frame_indices`. Different constraint set types can be mixed in the same list.
+
+```json
+{
+  "texts": ["A person walks forward and reaches with the right hand."],
+  "durations": [4.0],
+  "model": "kimodo-soma-rp",
+  "cfg_type": "separated",
+  "cfg_weight": [2.0, 2.0],
+  "constraints": [
+    {
+      "type": "root2d",
+      "frame_indices": [0, 60, 120],
+      "smooth_root_2d": [[0.0, 0.0], [0.0, 1.0], [0.5, 2.0]]
+    },
+    {
+      "type": "right-hand",
+      "frame_indices": [90],
+      "root_positions": [[0.25, 0.95, 1.5]],
+      "smooth_root_2d": [[0.25, 1.5]],
+      "local_joints_rot": [
+        [
+          [0.0, 0.0, 0.0],
+          "... repeat until J joints ..."
+        ]
+      ]
+    }
+  ]
+}
+```
+
+The `"... repeat until J joints ..."` / `"... J joints ..."` strings in the
+examples are placeholders for explaining shapes, not valid values to submit. In
+a real request, `local_joints_rot` must be a pure numeric nested array with
+shape `[T, J, 3]`, where `J` must match the target model skeleton joint count,
+for example `30` for SOMA30, `77` for SOMA77, and `34` for G1.
+
+Common coordinate rules:
+
+- `frame_indices` are 0-based frame numbers on the full generated motion
+  timeline, not frame numbers restarted within each prompt segment.
+- Coordinates use a Y-up frame, with XZ as the horizontal ground plane.
+- Position units are meters.
+- `smooth_root_2d` is `[x, z]` relative to the canonical origin; frame 0 is
+  usually near `[0.0, 0.0]`.
+- `root_positions` is `[x, y, z]`, where `y` is the root/hips height.
+- `global_root_heading` is not radians; it is `[cos(theta), sin(theta)]`.
+
+### Constraint Set Overview
+
+| `type` | Required fields | Optional fields | Description |
+| --- | --- | --- | --- |
+| `root2d` | `frame_indices`, `smooth_root_2d` | `global_root_heading` | Constrains smoothed root path or waypoints on the XZ ground plane. |
+| `fullbody` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Constrains full-body joint positions through complete pose keyframes. |
+| `left-hand` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Shorthand for `end-effector`; constrains left-hand related end-effectors and root/hips. |
+| `right-hand` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Shorthand for `end-effector`; constrains right-hand related end-effectors and root/hips. |
+| `left-foot` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Shorthand for `end-effector`; constrains left-foot related end-effectors and root/hips. |
+| `right-foot` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Shorthand for `end-effector`; constrains right-foot related end-effectors and root/hips. |
+| `end-effector` | `frame_indices`, `joint_names`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | General end-effector constraint; can specify multiple semantic end-effector groups. |
+
+Except for `root2d`, pose-based constraint sets require `root_positions` and a
+complete skeleton `local_joints_rot`. They do not accept direct XYZ targets for
+one hand or foot. Kimodo first runs FK from the complete pose, then extracts the
+full-body or end-effector targets used by the selected set type.
+
+### `root2d`
+
+Required fields:
+
+- `type`: `"root2d"`
+- `frame_indices`: `[T]`
+- `smooth_root_2d`: `[T, 2]`, each item is `[x, z]`
+
+Optional fields:
+
+- `global_root_heading`: `[T, 2]`, each item is `[cos(theta), sin(theta)]`
+
+```json
+{
+  "type": "root2d",
+  "frame_indices": [0, 30, 60],
+  "smooth_root_2d": [
+    [0.0, 0.0],
+    [0.0, 1.0],
+    [0.5, 2.0]
+  ],
+  "global_root_heading": [
+    [1.0, 0.0],
+    [0.7071, 0.7071],
+    [0.0, 1.0]
+  ]
+}
+```
+
+Omit `global_root_heading` when heading should not be constrained:
+
+```json
+{
+  "type": "root2d",
+  "frame_indices": [0, 60],
+  "smooth_root_2d": [[0.0, 0.0], [1.2, 0.3]]
+}
+```
+
+### `fullbody`
+
+Required fields:
+
+- `type`: `"fullbody"`
+- `frame_indices`: `[T]`
+- `root_positions`: `[T, 3]`, each item is `[x, y, z]`
+- `local_joints_rot`: `[T, J, 3]`, axis-angle radians
+
+Optional fields:
+
+- `smooth_root_2d`: `[T, 2]`, each item is `[x, z]`. If omitted, the runtime
+  uses the XZ components from `root_positions`.
+
+```json
+{
+  "type": "fullbody",
+  "frame_indices": [60],
+  "root_positions": [[0.5, 0.95, 2.0]],
+  "smooth_root_2d": [[0.5, 2.0]],
+  "local_joints_rot": [
+    [
+      [0.0, 0.0, 0.0],
+      [0.02, 0.0, 0.0],
+      "... repeat until J joints ..."
+    ]
+  ]
+}
+```
+
+### `left-hand` / `right-hand` / `left-foot` / `right-foot`
+
+These four set types are `end-effector` shorthands. They use the same fields as
+`fullbody`, but internally only use the corresponding hand/foot end-effector
+targets from the complete pose.
+
+Required fields:
+
+- `type`: `"left-hand"`, `"right-hand"`, `"left-foot"`, or `"right-foot"`
+- `frame_indices`: `[T]`
+- `root_positions`: `[T, 3]`
+- `local_joints_rot`: `[T, J, 3]`
+
+Optional fields:
+
+- `smooth_root_2d`: `[T, 2]`. If omitted, the runtime uses the XZ components
+  from `root_positions`.
+
+```json
+{
+  "type": "right-hand",
+  "frame_indices": [90],
+  "root_positions": [[0.25, 0.95, 1.5]],
+  "smooth_root_2d": [[0.25, 1.5]],
+  "local_joints_rot": [
+    [
+      [0.0, 0.0, 0.0],
+      [0.02, 0.0, 0.0],
+      "... repeat until J joints ..."
+    ]
+  ]
+}
+```
+
+For the other shorthands, only replace `type`:
+
+```json
+{ "type": "left-hand", "frame_indices": [90], "root_positions": [[0.25, 0.95, 1.5]], "local_joints_rot": [["... J joints ..."]] }
+```
+
+```json
+{ "type": "left-foot", "frame_indices": [90], "root_positions": [[0.25, 0.95, 1.5]], "local_joints_rot": [["... J joints ..."]] }
+```
+
+```json
+{ "type": "right-foot", "frame_indices": [90], "root_positions": [[0.25, 0.95, 1.5]], "local_joints_rot": [["... J joints ..."]] }
+```
+
+### `end-effector`
+
+Use `end-effector` to constrain one or more semantic end-effector groups at
+once. Current `joint_names` values use these names:
+
+```json
+["LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"]
+```
+
+Required fields:
+
+- `type`: `"end-effector"`
+- `joint_names`: `list[str]`
+- `frame_indices`: `[T]`
+- `root_positions`: `[T, 3]`
+- `local_joints_rot`: `[T, J, 3]`
+
+Optional fields:
+
+- `smooth_root_2d`: `[T, 2]`. If omitted, the runtime uses the XZ components
+  from `root_positions`.
+
+```json
+{
+  "type": "end-effector",
+  "joint_names": ["LeftHand", "RightFoot"],
+  "frame_indices": [45, 90],
+  "root_positions": [
+    [0.0, 0.95, 0.8],
+    [0.25, 0.95, 1.5]
+  ],
+  "smooth_root_2d": [
+    [0.0, 0.8],
+    [0.25, 1.5]
+  ],
+  "local_joints_rot": [
+    [
+      [0.0, 0.0, 0.0],
+      [0.02, 0.0, 0.0],
+      "... repeat until J joints ..."
+    ],
+    [
+      [0.05, 0.0, 0.0],
+      [0.02, 0.01, 0.0],
+      "... repeat until J joints ..."
+    ]
+  ]
+}
+```
+
+### Mixed Constraints
+
+Different set types can be mixed in one request:
+
+```json
+{
+  "constraints": [
+    {
+      "type": "root2d",
+      "frame_indices": [0, 60, 120],
+      "smooth_root_2d": [[0.0, 0.0], [0.0, 1.0], [0.5, 2.0]]
+    },
+    {
+      "type": "right-hand",
+      "frame_indices": [90],
+      "root_positions": [[0.25, 0.95, 1.5]],
+      "local_joints_rot": [
+        [
+          [0.0, 0.0, 0.0],
+          "... repeat until J joints ..."
+        ]
+      ]
+    },
+    {
+      "type": "fullbody",
+      "frame_indices": [120],
+      "root_positions": [[0.5, 0.95, 2.0]],
+      "local_joints_rot": [
+        [
+          [0.0, 0.0, 0.0],
+          "... repeat until J joints ..."
+        ]
+      ]
+    }
+  ]
+}
+```
+
+When mixing constraints, avoid contradictory targets at the same or nearby
+frames. For example, if `root2d` places the root at `[0.0, 1.0]` on frame 90
+but a pose-based constraint's `root_positions` / `smooth_root_2d` implies a far
+away root location, generation quality can drop or constraints can be ignored.

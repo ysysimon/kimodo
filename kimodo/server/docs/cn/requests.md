@@ -144,4 +144,263 @@ Classifier-free guidance 支持以下组合：
 
 `constraints` 不是 prompt 级别字段，而是作用在整条生成 motion 的全局时间线上。多段 prompt 生成时，runtime 会按累计帧范围把 constraint 裁剪到当前 segment；因此 constraint 的帧号应按完整 motion 的时间线来写，而不是每段 prompt 内从 0 重新计数。
 
-在正式 HTTP adapter 落地前，不应把这里理解为稳定的 HTTP wire format。
+这个字段仍属于 advanced/experimental；建议把下面的格式当作当前 server 实现支持的请求格式，而不是长期稳定的公共协议。
+
+## Constraints 请求格式
+
+HTTP 请求中推荐把 `constraints` 作为 JSON-compatible list 直接放进 `POST /jobs` body，而不是传 client 本地文件路径。每个 list item 是一个 constraint set object，并且至少包含 `type` 和 `frame_indices`。不同 `type` 的 constraint set 可以混合放在同一个数组里。
+
+```json
+{
+  "texts": ["A person walks forward and reaches with the right hand."],
+  "durations": [4.0],
+  "model": "kimodo-soma-rp",
+  "cfg_type": "separated",
+  "cfg_weight": [2.0, 2.0],
+  "constraints": [
+    {
+      "type": "root2d",
+      "frame_indices": [0, 60, 120],
+      "smooth_root_2d": [[0.0, 0.0], [0.0, 1.0], [0.5, 2.0]]
+    },
+    {
+      "type": "right-hand",
+      "frame_indices": [90],
+      "root_positions": [[0.25, 0.95, 1.5]],
+      "smooth_root_2d": [[0.25, 1.5]],
+      "local_joints_rot": [
+        [
+          [0.0, 0.0, 0.0],
+          "... repeat until J joints ..."
+        ]
+      ]
+    }
+  ]
+}
+```
+
+下面示例中的 `"... repeat until J joints ..."` / `"... J joints ..."` 只是为了说明形状，不是可直接提交的合法值。真实请求里的 `local_joints_rot` 必须是纯数字嵌套数组，形状为 `[T, J, 3]`，其中 `J` 必须等于目标模型 skeleton 的 joint 数量，例如 SOMA30 是 `30`，SOMA77 是 `77`，G1 是 `34`。
+
+通用坐标规则：
+
+- `frame_indices` 是整条生成 motion 的 0-based 全局帧号，不是每个 prompt segment 内部重新计数。
+- 坐标系是 Y-up，XZ 是水平地面平面。
+- 位置单位是米。
+- `smooth_root_2d` 是 `[x, z]`，相对 canonical origin；通常第 0 帧附近是 `[0.0, 0.0]`。
+- `root_positions` 是 `[x, y, z]`，其中 `y` 是 root/hips 高度。
+- `global_root_heading` 不是 radians，而是 `[cos(theta), sin(theta)]`。
+
+### Constraint set 总览
+
+| `type` | 必须字段 | Optional 字段 | 说明 |
+| --- | --- | --- | --- |
+| `root2d` | `frame_indices`, `smooth_root_2d` | `global_root_heading` | 约束 smoothed root 在 XZ 地面平面的路径或 waypoint。 |
+| `fullbody` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | 通过完整 pose keyframe 约束全身 joint positions。 |
+| `left-hand` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | `end-effector` 的 shorthand，只约束左手相关 end-effector 和 root/hips。 |
+| `right-hand` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | `end-effector` 的 shorthand，只约束右手相关 end-effector 和 root/hips。 |
+| `left-foot` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | `end-effector` 的 shorthand，只约束左脚相关 end-effector 和 root/hips。 |
+| `right-foot` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | `end-effector` 的 shorthand，只约束右脚相关 end-effector 和 root/hips。 |
+| `end-effector` | `frame_indices`, `joint_names`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | 通用 end-effector constraint，可一次指定多个 semantic end-effector group。 |
+
+除 `root2d` 外，pose-based constraint set 都需要 `root_positions` 和完整 skeleton 的 `local_joints_rot`。这些 set 不是直接传某个手/脚的 XYZ target；它们会先用完整 pose 做 FK，再从中抽取对应的全身或 end-effector 目标。
+
+### `root2d`
+
+必须字段：
+
+- `type`: `"root2d"`
+- `frame_indices`: `[T]`
+- `smooth_root_2d`: `[T, 2]`，每项为 `[x, z]`
+
+Optional 字段：
+
+- `global_root_heading`: `[T, 2]`，每项为 `[cos(theta), sin(theta)]`
+
+```json
+{
+  "type": "root2d",
+  "frame_indices": [0, 30, 60],
+  "smooth_root_2d": [
+    [0.0, 0.0],
+    [0.0, 1.0],
+    [0.5, 2.0]
+  ],
+  "global_root_heading": [
+    [1.0, 0.0],
+    [0.7071, 0.7071],
+    [0.0, 1.0]
+  ]
+}
+```
+
+如果不需要约束朝向，可以省略 `global_root_heading`：
+
+```json
+{
+  "type": "root2d",
+  "frame_indices": [0, 60],
+  "smooth_root_2d": [[0.0, 0.0], [1.2, 0.3]]
+}
+```
+
+### `fullbody`
+
+必须字段：
+
+- `type`: `"fullbody"`
+- `frame_indices`: `[T]`
+- `root_positions`: `[T, 3]`，每项为 `[x, y, z]`
+- `local_joints_rot`: `[T, J, 3]`，axis-angle radians
+
+Optional 字段：
+
+- `smooth_root_2d`: `[T, 2]`，每项为 `[x, z]`。如果省略，runtime 会使用 `root_positions` 的 XZ 分量。
+
+```json
+{
+  "type": "fullbody",
+  "frame_indices": [60],
+  "root_positions": [[0.5, 0.95, 2.0]],
+  "smooth_root_2d": [[0.5, 2.0]],
+  "local_joints_rot": [
+    [
+      [0.0, 0.0, 0.0],
+      [0.02, 0.0, 0.0],
+      "... repeat until J joints ..."
+    ]
+  ]
+}
+```
+
+### `left-hand` / `right-hand` / `left-foot` / `right-foot`
+
+这四个 set type 是 `end-effector` 的 shorthand。字段与 `fullbody` 相同，但内部只使用完整 pose 中对应 hand/foot end-effector 相关目标。
+
+必须字段：
+
+- `type`: `"left-hand"`、`"right-hand"`、`"left-foot"` 或 `"right-foot"`
+- `frame_indices`: `[T]`
+- `root_positions`: `[T, 3]`
+- `local_joints_rot`: `[T, J, 3]`
+
+Optional 字段：
+
+- `smooth_root_2d`: `[T, 2]`。如果省略，runtime 会使用 `root_positions` 的 XZ 分量。
+
+```json
+{
+  "type": "right-hand",
+  "frame_indices": [90],
+  "root_positions": [[0.25, 0.95, 1.5]],
+  "smooth_root_2d": [[0.25, 1.5]],
+  "local_joints_rot": [
+    [
+      [0.0, 0.0, 0.0],
+      [0.02, 0.0, 0.0],
+      "... repeat until J joints ..."
+    ]
+  ]
+}
+```
+
+其它 shorthand 只需要替换 `type`：
+
+```json
+{ "type": "left-hand", "frame_indices": [90], "root_positions": [[0.25, 0.95, 1.5]], "local_joints_rot": [["... J joints ..."]] }
+```
+
+```json
+{ "type": "left-foot", "frame_indices": [90], "root_positions": [[0.25, 0.95, 1.5]], "local_joints_rot": [["... J joints ..."]] }
+```
+
+```json
+{ "type": "right-foot", "frame_indices": [90], "root_positions": [[0.25, 0.95, 1.5]], "local_joints_rot": [["... J joints ..."]] }
+```
+
+### `end-effector`
+
+`end-effector` 用于一次约束一个或多个 semantic end-effector group。当前 `joint_names` 使用这些名字：
+
+```json
+["LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"]
+```
+
+必须字段：
+
+- `type`: `"end-effector"`
+- `joint_names`: `list[str]`
+- `frame_indices`: `[T]`
+- `root_positions`: `[T, 3]`
+- `local_joints_rot`: `[T, J, 3]`
+
+Optional 字段：
+
+- `smooth_root_2d`: `[T, 2]`。如果省略，runtime 会使用 `root_positions` 的 XZ 分量。
+
+```json
+{
+  "type": "end-effector",
+  "joint_names": ["LeftHand", "RightFoot"],
+  "frame_indices": [45, 90],
+  "root_positions": [
+    [0.0, 0.95, 0.8],
+    [0.25, 0.95, 1.5]
+  ],
+  "smooth_root_2d": [
+    [0.0, 0.8],
+    [0.25, 1.5]
+  ],
+  "local_joints_rot": [
+    [
+      [0.0, 0.0, 0.0],
+      [0.02, 0.0, 0.0],
+      "... repeat until J joints ..."
+    ],
+    [
+      [0.05, 0.0, 0.0],
+      [0.02, 0.01, 0.0],
+      "... repeat until J joints ..."
+    ]
+  ]
+}
+```
+
+### 混合 constraints
+
+可以在一个请求中混合不同 set type：
+
+```json
+{
+  "constraints": [
+    {
+      "type": "root2d",
+      "frame_indices": [0, 60, 120],
+      "smooth_root_2d": [[0.0, 0.0], [0.0, 1.0], [0.5, 2.0]]
+    },
+    {
+      "type": "right-hand",
+      "frame_indices": [90],
+      "root_positions": [[0.25, 0.95, 1.5]],
+      "local_joints_rot": [
+        [
+          [0.0, 0.0, 0.0],
+          "... repeat until J joints ..."
+        ]
+      ]
+    },
+    {
+      "type": "fullbody",
+      "frame_indices": [120],
+      "root_positions": [[0.5, 0.95, 2.0]],
+      "local_joints_rot": [
+        [
+          [0.0, 0.0, 0.0],
+          "... repeat until J joints ..."
+        ]
+      ]
+    }
+  ]
+}
+```
+
+混合使用时要避免同一帧或相近帧的约束互相矛盾。例如 `root2d` 指定第 90 帧 root 在 `[0.0, 1.0]`，但某个 pose-based constraint 的 `root_positions` / `smooth_root_2d` 暗示 root 在很远的位置，这会降低生成质量或导致约束被忽略。
