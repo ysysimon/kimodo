@@ -44,10 +44,10 @@ def test_root2d_constraint_parser_projects_positions_sorts_frames_and_reads_head
     monkeypatch.syspath_prepend(str(plugin_libs))
     constraints = importlib.import_module("remote_motion_houdini.constraints")
 
-    rotate_y_90 = (0.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0)
+    z_to_x = (0.0, 0.0, -1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0)
     geo = FakeGeometry(
         [
-            FakePoint((2.0, 0.0, 5.0), {"frame": 20, "transform": rotate_y_90}),
+            FakePoint((2.0, 0.0, 5.0), {"frame": 20, "transform": z_to_x}),
             FakePoint((0.0, 0.0, 0.0), {"frame": 1, "transform": _identity3()}),
             FakePoint((-1.0, 0.25, 3.0), {"frame": 10, "transform": _identity3()}),
         ],
@@ -66,7 +66,7 @@ def test_root2d_constraint_parser_projects_positions_sorts_frames_and_reads_head
         "type": "root2d",
         "frame_indices": [0, 9, 19],
         "smooth_root_2d": [[0.0, 0.0], [-1.0, 3.0], [2.0, 5.0]],
-        "global_root_heading": [[0.0, 1.0], [0.0, 1.0], [1.0, 0.0]],
+        "global_root_heading": [[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
     }
     assert len(warnings) == 1
     assert "non-planar canonical Y=0.25" in warnings[0]
@@ -308,7 +308,7 @@ def test_generate_motion_can_include_root2d_constraints(monkeypatch, tmp_path):
             "type": "root2d",
             "frame_indices": [0, 19],
             "smooth_root_2d": [[0.0, 0.0], [2.0, 5.0]],
-            "global_root_heading": [[0.0, 1.0], [0.0, 1.0]],
+            "global_root_heading": [[1.0, 0.0], [1.0, 0.0]],
         }
     ]
 

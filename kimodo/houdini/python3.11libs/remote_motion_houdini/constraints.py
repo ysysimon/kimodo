@@ -163,15 +163,16 @@ def _heading_from_transform(
 ) -> list[float]:
     matrix = _matrix3_rows(transform)
     fx, fy, fz = forward_axis
-    world_x = matrix[0][0] * fx + matrix[0][1] * fy + matrix[0][2] * fz
-    world_z = matrix[2][0] * fx + matrix[2][1] * fy + matrix[2][2] * fz
+    world_x = fx * matrix[0][0] + fy * matrix[1][0] + fz * matrix[2][0]
+    world_z = fx * matrix[0][2] + fy * matrix[1][2] + fz * matrix[2][2]
     length = math.hypot(world_x, world_z)
     if length <= 1e-8:
         raise Root2DConstraintParseError(
             f"Root2D constraint point {point_index} has a transform whose forward axis "
             "cannot be projected onto the XZ plane."
         )
-    return [world_x / length, world_z / length]
+    # Kimodo stores heading as [cos(theta), sin(theta)], where theta=0 faces +Z.
+    return [world_z / length, world_x / length]
 
 
 def _matrix3_rows(value: Any) -> list[list[float]]:
