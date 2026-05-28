@@ -12,6 +12,7 @@ from remote_motion_client import RemoteMotionClient
 
 from .cache import default_download_dir
 from .config import get_server_url
+from .constraints import DEFAULT_ROOT2D_CONSTRAINT_NODE, root2d_constraint_from_geometry
 from .importer import format_houdini_path, refresh_mocap_import
 
 
@@ -60,6 +61,10 @@ def generate_motion(kwargs: dict[str, Any]) -> Path:
     if model not in (None, ""):
         payload["model"] = model
     _apply_optional_generation_parms(node, payload)
+    output_world_offset = _output_world_offset(node)
+    if _is_nonzero_vector(output_world_offset):
+        payload["output_world_offset"] = list(output_world_offset)
+    _apply_root2d_constraints(node, payload)
 
     client = RemoteMotionClient(server_url)
     submitted = client.submit(payload)
@@ -135,11 +140,125 @@ def _apply_optional_generation_parms(node, payload: dict[str, Any]) -> None:
         payload["num_transition_frames"] = int(num_transition_frames)
 
 
+def _apply_root2d_constraints(node, payload: dict[str, Any]) -> None:
+    if not _eval_bool_parm(node, "enable_constraints", False):
+        return
+
+    geometry = _root2d_constraint_geometry(node)
+    if geometry is None:
+        return
+
+    constraint, warnings = root2d_constraint_from_geometry(
+        geometry,
+        frame_origin=float(_eval_parm(node, "frame_origin", 1)),
+        include_heading=_eval_bool_parm(node, "include_heading", True),
+        heading_forward_axis=str(_eval_menu_token(node, "heading_forward_axis", "+Z")),
+        nonplanar_y_tolerance=float(_eval_parm(node, "nonplanar_y_tolerance", 0.001)),
+        output_world_offset=_output_world_offset(node),
+    )
+    if constraint is not None:
+        payload["constraints"] = [constraint]
+    _display_houdini_warnings(warnings)
+
+
+def _root2d_constraint_geometry(node):
+    source = _root2d_constraint_source_node(node)
+    if source is None:
+        return None
+
+    geometry_method = getattr(source, "geometry", None)
+    if not callable(geometry_method):
+        return None
+    return geometry_method()
+
+
+def _root2d_constraint_source_node(node):
+    child_method = getattr(node, "node", None)
+    if callable(child_method):
+        try:
+            return child_method(DEFAULT_ROOT2D_CONSTRAINT_NODE)
+        except Exception:
+            return None
+    return None
+
+
+def _display_houdini_warnings(warnings: list[str]) -> None:
+    if not warnings:
+        return
+    try:
+        import hou  # type: ignore
+    except ImportError:
+        return
+
+    ui = getattr(hou, "ui", None)
+    display_message = getattr(ui, "displayMessage", None)
+    if not callable(display_message):
+        return
+
+    severity_type = getattr(hou, "severityType", None)
+    warning = getattr(severity_type, "Warning", None) if severity_type is not None else None
+    kwargs = {"severity": warning} if warning is not None else {}
+    display_message("\n".join(warnings), **kwargs)
+
+
 def _eval_parm(node, parm_name: str, default: Any = None) -> Any:
     parm = node.parm(parm_name)
     if parm is None:
         return default
     return parm.eval()
+
+
+def _eval_bool_parm(node, parm_name: str, default: bool) -> bool:
+    value = _eval_parm(node, parm_name, None)
+    if value in (None, ""):
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _output_world_offset(node) -> tuple[float, float, float]:
+    return _eval_vector3_parm(node, "output_world_offset", (0.0, 0.0, 0.0))
+
+
+def _eval_vector3_parm(node, parm_name: str, default: tuple[float, float, float]) -> tuple[float, float, float]:
+    parm_tuple = getattr(node, "parmTuple", None)
+    if callable(parm_tuple):
+        tuple_parm = parm_tuple(parm_name)
+        if tuple_parm is not None:
+            value = tuple_parm.eval()
+            return _coerce_vector3(value, parm_name)
+
+    value = _eval_parm(node, parm_name, None)
+    if value not in (None, ""):
+        return _coerce_vector3(value, parm_name)
+
+    components = []
+    for suffix in ("x", "y", "z"):
+        component = _eval_parm(node, f"{parm_name}{suffix}", None)
+        if component in (None, ""):
+            components = []
+            break
+        components.append(component)
+    if components:
+        return _coerce_vector3(components, parm_name)
+
+    return default
+
+
+def _coerce_vector3(value: Any, parm_name: str) -> tuple[float, float, float]:
+    try:
+        if len(value) == 3:
+            return (float(value[0]), float(value[1]), float(value[2]))
+    except TypeError:
+        pass
+    except Exception as exc:
+        raise ValueError(f"{parm_name} must be a 3D vector.") from exc
+    raise ValueError(f"{parm_name} must be a 3D vector.")
+
+
+def _is_nonzero_vector(value: tuple[float, float, float]) -> bool:
+    return any(abs(component) > 1e-8 for component in value)
 
 
 def _eval_menu_token(node, parm_name: str, default: Any = None) -> Any:

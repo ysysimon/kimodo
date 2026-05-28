@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import re
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from kimodo.model.registry import DEFAULT_MODEL
 
@@ -19,6 +19,103 @@ from .runtime import Runtime, TextEncoderServerConfig
 from .schemas import ArtifactRecord, GenerationRequest, JobRecord, JobStatus
 
 _PATH_COMPONENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+Vector2 = tuple[float, float]
+Vector3 = tuple[float, float, float]
+AxisAnglePose = list[list[Vector3]]
+EndEffectorName = Literal["LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"]
+
+
+class ConstraintRequestBase(BaseModel):
+    """Base HTTP schema for one Kimodo constraint set."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    frame_indices: list[StrictInt]
+
+    @model_validator(mode="after")
+    def _validate_frame_indices(self) -> "ConstraintRequestBase":
+        if not self.frame_indices:
+            raise ValueError("frame_indices must contain at least one frame.")
+        return self
+
+
+class Root2DConstraintRequest(ConstraintRequestBase):
+    type: Literal["root2d"]
+    smooth_root_2d: list[Vector2]
+    global_root_heading: list[Vector2] | None = None
+
+    @model_validator(mode="after")
+    def _validate_lengths(self) -> "Root2DConstraintRequest":
+        _validate_count("smooth_root_2d", self.smooth_root_2d, self.frame_indices)
+        if self.global_root_heading is not None:
+            _validate_count("global_root_heading", self.global_root_heading, self.frame_indices)
+        return self
+
+
+class PoseConstraintRequestBase(ConstraintRequestBase):
+    root_positions: list[Vector3]
+    local_joints_rot: AxisAnglePose
+    smooth_root_2d: list[Vector2] | None = None
+
+    @model_validator(mode="after")
+    def _validate_pose_lengths(self) -> "PoseConstraintRequestBase":
+        _validate_count("root_positions", self.root_positions, self.frame_indices)
+        _validate_count("local_joints_rot", self.local_joints_rot, self.frame_indices)
+        if self.smooth_root_2d is not None:
+            _validate_count("smooth_root_2d", self.smooth_root_2d, self.frame_indices)
+        for frame_pose in self.local_joints_rot:
+            if not frame_pose:
+                raise ValueError("local_joints_rot must include at least one joint per constrained frame.")
+        return self
+
+
+class FullBodyConstraintRequest(PoseConstraintRequestBase):
+    type: Literal["fullbody"]
+
+
+class LeftHandConstraintRequest(PoseConstraintRequestBase):
+    type: Literal["left-hand"]
+
+
+class RightHandConstraintRequest(PoseConstraintRequestBase):
+    type: Literal["right-hand"]
+
+
+class LeftFootConstraintRequest(PoseConstraintRequestBase):
+    type: Literal["left-foot"]
+
+
+class RightFootConstraintRequest(PoseConstraintRequestBase):
+    type: Literal["right-foot"]
+
+
+class EndEffectorConstraintRequest(PoseConstraintRequestBase):
+    type: Literal["end-effector"]
+    joint_names: list[EndEffectorName]
+
+    @model_validator(mode="after")
+    def _validate_joint_names(self) -> "EndEffectorConstraintRequest":
+        if not self.joint_names:
+            raise ValueError("joint_names must contain at least one end-effector group.")
+        return self
+
+
+ConstraintRequestBody = Annotated[
+    Root2DConstraintRequest
+    | FullBodyConstraintRequest
+    | LeftHandConstraintRequest
+    | RightHandConstraintRequest
+    | LeftFootConstraintRequest
+    | RightFootConstraintRequest
+    | EndEffectorConstraintRequest,
+    Field(discriminator="type"),
+]
+
+
+def _validate_count(field_name: str, values: list, frame_indices: list[StrictInt]) -> None:
+    if len(values) != len(frame_indices):
+        raise ValueError(f"{field_name} must have the same length as frame_indices.")
 
 
 class GenerationRequestBody(BaseModel):
@@ -41,10 +138,11 @@ class GenerationRequestBody(BaseModel):
     zip_output: bool = False
     postprocess: bool = True
     root_margin: float = 0.04
-    constraints: Any | None = None
+    constraints: str | list[ConstraintRequestBody] | None = None
+    output_world_offset: Vector3 | None = None
 
     def to_generation_request(self) -> GenerationRequest:
-        return GenerationRequest(**self.model_dump())
+        return GenerationRequest(**self.model_dump(mode="json"))
 
 
 class ArtifactResponse(BaseModel):

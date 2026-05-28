@@ -8,7 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import torch
 
+from kimodo.server.exports import save_bvh_artifacts
 from kimodo.server.runtime import ModelRuntime, TextEncoderServerConfig
 from kimodo.server.schemas import ArtifactRecord, GenerationRequest
 
@@ -85,6 +87,7 @@ def test_model_runtime_generate_maps_request_to_model_and_exports(monkeypatch, t
         zip_output=True,
         postprocess=False,
         root_margin=0.2,
+        output_world_offset=[1.0, 0.0, -2.0],
         job_id="job-1",
     )
 
@@ -118,6 +121,7 @@ def test_model_runtime_generate_maps_request_to_model_and_exports(monkeypatch, t
             "device": "cpu",
             "job_id": "job-1",
             "standard_tpose": True,
+            "output_world_offset": [1.0, 0.0, -2.0],
         }
     ]
     assert export_calls["zip"] == [
@@ -129,6 +133,47 @@ def test_model_runtime_generate_maps_request_to_model_and_exports(monkeypatch, t
     ]
     assert set(result.artifacts) == {"zip"}
     assert result.artifacts["zip"].download_url == "/jobs/job-1/artifacts/zip"
+
+
+def test_model_runtime_generate_loads_constraints_and_forwards_to_model(monkeypatch, tmp_path):
+    runtime, model = _runtime_with_model("kimodo-soma-rp", skeleton_name="somaskel30")
+    _patch_exports(monkeypatch)
+    constraints_payload = [
+        {
+            "type": "root2d",
+            "frame_indices": [0],
+            "smooth_root_2d": [[0.0, 0.0]],
+        }
+    ]
+    loaded_constraints = [object()]
+    calls = []
+
+    def fake_load_constraints_lst(path_or_data, skeleton, *, device=None, dtype=None):
+        calls.append({"path_or_data": path_or_data, "skeleton": skeleton, "device": device, "dtype": dtype})
+        return loaded_constraints
+
+    monkeypatch.setattr("kimodo.constraints.load_constraints_lst", fake_load_constraints_lst)
+
+    runtime.generate(
+        GenerationRequest(
+            texts=["walk"],
+            durations=[1.0],
+            model="kimodo-soma-rp",
+            formats=["npz"],
+            constraints=constraints_payload,
+        ),
+        job_dir=tmp_path,
+    )
+
+    assert calls == [
+        {
+            "path_or_data": constraints_payload,
+            "skeleton": model.skeleton,
+            "device": "cpu",
+            "dtype": None,
+        }
+    ]
+    assert model.calls[0]["constraint_lst"] is loaded_constraints
 
 
 def test_model_runtime_generate_forwards_bvh_standard_tpose_false(monkeypatch, tmp_path):
@@ -155,6 +200,7 @@ def test_model_runtime_generate_forwards_bvh_standard_tpose_false(monkeypatch, t
             "device": "cpu",
             "job_id": None,
             "standard_tpose": False,
+            "output_world_offset": None,
         }
     ]
 
@@ -214,6 +260,45 @@ def test_model_runtime_generate_rejects_invalid_requests(monkeypatch, tmp_path, 
         runtime.generate(generation_request, job_dir=tmp_path)
 
 
+def test_save_bvh_artifacts_bakes_output_world_offset_for_each_sample(monkeypatch, tmp_path):
+    captures = []
+    skeleton = SimpleNamespace(name="somaskel77", root_idx=0)
+    motion = {
+        "posed_joints": torch.tensor(
+            [
+                [[[0.0, 1.0, 2.0]], [[1.0, 1.0, 3.0]]],
+                [[[5.0, 1.0, 6.0]], [[6.0, 1.0, 7.0]]],
+            ]
+        ),
+        "global_rot_mats": torch.eye(3).reshape(1, 1, 1, 3, 3).repeat(2, 2, 1, 1, 1),
+    }
+
+    def fake_global_rots_to_local_rots(joints_rot, export_skeleton):
+        return joints_rot
+
+    def fake_save_motion_bvh(path, local_rot_mats, root_positions, *, skeleton, fps, standard_tpose):
+        captures.append(root_positions.detach().cpu().tolist())
+        Path(path).write_text("BVH", encoding="utf-8")
+
+    monkeypatch.setattr("kimodo.server.exports.global_rots_to_local_rots", fake_global_rots_to_local_rots)
+    monkeypatch.setattr("kimodo.server.exports.save_motion_bvh", fake_save_motion_bvh)
+
+    artifacts = save_bvh_artifacts(
+        tmp_path,
+        motion,
+        skeleton=skeleton,
+        fps=30.0,
+        device="cpu",
+        output_world_offset=[10.0, 0.0, -2.0],
+    )
+
+    assert set(artifacts) == {"bvh_00", "bvh_01"}
+    assert captures == [
+        [[10.0, 1.0, 0.0], [11.0, 1.0, 1.0]],
+        [[15.0, 1.0, 4.0], [16.0, 1.0, 5.0]],
+    ]
+
+
 class DummyModel:
     def __init__(self, *, fps: float, skeleton_name: str) -> None:
         self.fps = fps
@@ -242,7 +327,17 @@ def _patch_exports(monkeypatch):
         calls["npz"].append({"artifacts_dir": Path(artifacts_dir), "motion": motion, "job_id": job_id})
         return {"npz": _artifact("npz", job_id=job_id)}
 
-    def save_bvh_artifacts(artifacts_dir, motion, *, skeleton, fps, device, job_id=None, standard_tpose=False):
+    def save_bvh_artifacts(
+        artifacts_dir,
+        motion,
+        *,
+        skeleton,
+        fps,
+        device,
+        job_id=None,
+        standard_tpose=False,
+        output_world_offset=None,
+    ):
         calls["bvh"].append(
             {
                 "artifacts_dir": Path(artifacts_dir),
@@ -252,6 +347,7 @@ def _patch_exports(monkeypatch):
                 "device": device,
                 "job_id": job_id,
                 "standard_tpose": standard_tpose,
+                "output_world_offset": output_world_offset,
             }
         )
         return {"bvh": _artifact("bvh", job_id=job_id)}

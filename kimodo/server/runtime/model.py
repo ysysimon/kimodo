@@ -154,6 +154,7 @@ class ModelRuntime:
                     device=self.device,
                     job_id=request.job_id,
                     standard_tpose=request.bvh_standard_tpose,
+                    output_world_offset=request.output_world_offset,
                 )
             )
 

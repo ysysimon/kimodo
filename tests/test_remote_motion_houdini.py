@@ -39,6 +39,124 @@ def test_hda_callbacks_model_menu_and_on_created(monkeypatch):
     assert node.parm("model").value == DEFAULT_MODEL
 
 
+def test_root2d_constraint_parser_projects_positions_sorts_frames_and_reads_heading(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    rotate_y_90 = (0.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0)
+    geo = FakeGeometry(
+        [
+            FakePoint((2.0, 0.0, 5.0), {"frame": 20, "transform": rotate_y_90}),
+            FakePoint((0.0, 0.0, 0.0), {"frame": 1, "transform": _identity3()}),
+            FakePoint((-1.0, 0.25, 3.0), {"frame": 10, "transform": _identity3()}),
+        ],
+        point_attribs={"frame", "transform"},
+    )
+
+    constraint, warnings = constraints.root2d_constraint_from_geometry(
+        geo,
+        frame_origin=1,
+        include_heading=True,
+        heading_forward_axis="+Z",
+        nonplanar_y_tolerance=0.001,
+    )
+
+    assert constraint == {
+        "type": "root2d",
+        "frame_indices": [0, 9, 19],
+        "smooth_root_2d": [[0.0, 0.0], [-1.0, 3.0], [2.0, 5.0]],
+        "global_root_heading": [[0.0, 1.0], [0.0, 1.0], [1.0, 0.0]],
+    }
+    assert len(warnings) == 1
+    assert "non-planar canonical Y=0.25" in warnings[0]
+
+
+def test_root2d_constraint_parser_subtracts_output_world_offset(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    geo = FakeGeometry(
+        [
+            FakePoint((10.0, 0.0, 3.0), {"frame": 1}),
+            FakePoint((12.0, 0.0, 8.0), {"frame": 20}),
+        ],
+        point_attribs={"frame"},
+    )
+
+    constraint, warnings = constraints.root2d_constraint_from_geometry(
+        geo,
+        output_world_offset=(10.0, 0.0, 3.0),
+    )
+
+    assert constraint == {
+        "type": "root2d",
+        "frame_indices": [0, 19],
+        "smooth_root_2d": [[0.0, 0.0], [2.0, 5.0]],
+    }
+    assert warnings == []
+
+
+def test_root2d_constraint_parser_omits_heading_without_transform(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    geo = FakeGeometry(
+        [
+            FakePoint((0.0, 0.0, 0.0), {"frame": 1}),
+            FakePoint((1.0, 0.0, 2.0), {"frame": 3}),
+        ],
+        point_attribs={"frame"},
+    )
+
+    constraint, warnings = constraints.root2d_constraint_from_geometry(geo)
+
+    assert constraint == {
+        "type": "root2d",
+        "frame_indices": [0, 2],
+        "smooth_root_2d": [[0.0, 0.0], [1.0, 2.0]],
+    }
+    assert warnings == []
+
+
+def test_root2d_constraint_parser_rejects_bad_frames(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    duplicate = FakeGeometry(
+        [
+            FakePoint((0.0, 0.0, 0.0), {"frame": 1}),
+            FakePoint((1.0, 0.0, 1.0), {"frame": 1}),
+        ],
+        point_attribs={"frame"},
+    )
+    try:
+        constraints.root2d_constraint_from_geometry(duplicate)
+    except constraints.Root2DConstraintParseError as exc:
+        assert "duplicate frame" in str(exc)
+    else:
+        raise AssertionError("Expected duplicate frame to raise Root2DConstraintParseError")
+
+    negative = FakeGeometry([FakePoint((0.0, 0.0, 0.0), {"frame": 0})], point_attribs={"frame"})
+    try:
+        constraints.root2d_constraint_from_geometry(negative, frame_origin=1)
+    except constraints.Root2DConstraintParseError as exc:
+        assert "negative frame" in str(exc)
+    else:
+        raise AssertionError("Expected negative frame to raise Root2DConstraintParseError")
+
+    missing = FakeGeometry([FakePoint((0.0, 0.0, 0.0), {})], point_attribs=set())
+    try:
+        constraints.root2d_constraint_from_geometry(missing)
+    except constraints.Root2DConstraintParseError as exc:
+        assert "point 'frame' attribute" in str(exc)
+    else:
+        raise AssertionError("Expected missing frame to raise Root2DConstraintParseError")
+
+
 def test_generate_motion_reads_parms_downloads_and_refreshes(monkeypatch, tmp_path):
     from remote_motion_client.models import ArtifactInfo, JobInfo
 
@@ -113,6 +231,144 @@ def test_generate_motion_reads_parms_downloads_and_refreshes(monkeypatch, tmp_pa
     assert calls["download"]["dst"] == tmp_path / "motion_gen" / "job-1"
     assert node.parm("artifact_path").value == str(artifact_path)
     assert calls["refresh"]["artifact_path"] == artifact_path
+
+
+def test_generate_motion_can_include_root2d_constraints(monkeypatch, tmp_path):
+    from remote_motion_client.models import ArtifactInfo, JobInfo
+
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    callbacks = importlib.import_module("remote_motion_houdini.hda_callbacks")
+
+    calls: dict[str, Any] = {}
+
+    class FakeClient:
+        def __init__(self, server_url: str) -> None:
+            pass
+
+        def submit(self, payload: dict[str, Any]) -> JobInfo:
+            calls["payload"] = payload
+            return JobInfo(job_id="job-1", status="queued")
+
+        def wait(self, job_id: str, poll_interval: float, timeout: float | None) -> JobInfo:
+            return JobInfo(
+                job_id="job-1",
+                status="succeeded",
+                artifacts={
+                    "bvh": ArtifactInfo(
+                        key="bvh",
+                        filename="motion.bvh",
+                        content_type="application/octet-stream",
+                        size_bytes=8,
+                        download_url="/jobs/job-1/artifacts/bvh",
+                    )
+                },
+            )
+
+        def download_artifact(self, job: JobInfo, artifact_key: str, dst_dir_or_path: Path) -> Path:
+            return Path(dst_dir_or_path) / "motion.bvh"
+
+    geo = FakeGeometry(
+        [
+            FakePoint((12.0, 0.0, 8.0), {"frame": 20, "transform": _identity3()}),
+            FakePoint((10.0, 0.0, 3.0), {"frame": 1, "transform": _identity3()}),
+        ],
+        point_attribs={"frame", "transform"},
+    )
+    source = FakeSopNode(geo)
+
+    monkeypatch.setattr(callbacks, "RemoteMotionClient", FakeClient)
+    monkeypatch.setattr(callbacks, "default_download_dir", lambda job_id: tmp_path / job_id)
+    monkeypatch.setattr(callbacks, "refresh_mocap_import", lambda node, artifact_path: True)
+
+    node = FakeNode(
+        {
+            "server_url": "http://127.0.0.1:8000",
+            "prompt": "walk forward",
+            "duration": 2.5,
+            "seed": "",
+            "model": "",
+            "poll_interval": 0.25,
+            "wait_timeout": "",
+            "enable_constraints": True,
+            "frame_origin": 1,
+            "include_heading": True,
+            "heading_forward_axis": "+Z",
+            "nonplanar_y_tolerance": 0.001,
+            "output_world_offset": (10.0, 0.0, 3.0),
+        },
+        children={"OUT_ROOT2D_CONSTRAINTS": source},
+    )
+
+    callbacks.generate_motion({"node": node})
+
+    assert calls["payload"]["output_world_offset"] == [10.0, 0.0, 3.0]
+    assert calls["payload"]["constraints"] == [
+        {
+            "type": "root2d",
+            "frame_indices": [0, 19],
+            "smooth_root_2d": [[0.0, 0.0], [2.0, 5.0]],
+            "global_root_heading": [[0.0, 1.0], [0.0, 1.0]],
+        }
+    ]
+
+
+def test_generate_motion_skips_root2d_constraints_when_disabled(monkeypatch, tmp_path):
+    from remote_motion_client.models import ArtifactInfo, JobInfo
+
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    callbacks = importlib.import_module("remote_motion_houdini.hda_callbacks")
+
+    calls: dict[str, Any] = {}
+
+    class FakeClient:
+        def __init__(self, server_url: str) -> None:
+            pass
+
+        def submit(self, payload: dict[str, Any]) -> JobInfo:
+            calls["payload"] = payload
+            return JobInfo(job_id="job-1", status="queued")
+
+        def wait(self, job_id: str, poll_interval: float, timeout: float | None) -> JobInfo:
+            return JobInfo(
+                job_id="job-1",
+                status="succeeded",
+                artifacts={
+                    "bvh": ArtifactInfo(
+                        key="bvh",
+                        filename="motion.bvh",
+                        content_type="application/octet-stream",
+                        size_bytes=8,
+                        download_url="/jobs/job-1/artifacts/bvh",
+                    )
+                },
+            )
+
+        def download_artifact(self, job: JobInfo, artifact_key: str, dst_dir_or_path: Path) -> Path:
+            return Path(dst_dir_or_path) / "motion.bvh"
+
+    monkeypatch.setattr(callbacks, "RemoteMotionClient", FakeClient)
+    monkeypatch.setattr(callbacks, "default_download_dir", lambda job_id: tmp_path / job_id)
+    monkeypatch.setattr(callbacks, "refresh_mocap_import", lambda node, artifact_path: True)
+
+    geo = FakeGeometry([FakePoint((0.0, 0.0, 0.0), {"frame": 1})], point_attribs={"frame"})
+    node = FakeNode(
+        {
+            "server_url": "http://127.0.0.1:8000",
+            "prompt": "walk forward",
+            "duration": 2.5,
+            "model": "",
+            "poll_interval": 0.25,
+            "wait_timeout": "",
+            "enable_constraints": False,
+        },
+        children={"OUT_ROOT2D_CONSTRAINTS": FakeSopNode(geo)},
+    )
+
+    callbacks.generate_motion({"node": node})
+
+    assert "constraints" not in calls["payload"]
 
 
 def test_generate_motion_uses_configured_server_when_node_parm_is_empty(monkeypatch, tmp_path):
@@ -581,14 +837,68 @@ class FakeParm:
 
 
 class FakeNode:
-    def __init__(self, parms: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        parms: dict[str, Any],
+        *,
+        children: dict[str, Any] | None = None,
+        inputs: list[Any] | None = None,
+    ) -> None:
         self._parms = {key: FakeParm(value, key) for key, value in parms.items()}
+        self._children = children or {}
+        self._inputs = inputs or []
 
     def parm(self, name: str) -> FakeParm | None:
         return self._parms.get(name)
 
     def parms(self) -> list[FakeParm]:
         return list(self._parms.values())
+
+    def node(self, name: str):
+        return self._children.get(name)
+
+    def input(self, index: int):
+        if 0 <= index < len(self._inputs):
+            return self._inputs[index]
+        return None
+
+
+class FakeSopNode:
+    def __init__(self, geometry) -> None:
+        self._geometry = geometry
+
+    def geometry(self):
+        return self._geometry
+
+
+class FakeGeometry:
+    def __init__(self, points: list["FakePoint"], *, point_attribs: set[str]) -> None:
+        self._points = points
+        self._point_attribs = point_attribs
+
+    def points(self) -> list["FakePoint"]:
+        return self._points
+
+    def findPointAttrib(self, name: str):
+        return name if name in self._point_attribs else None
+
+
+class FakePoint:
+    def __init__(self, position: tuple[float, float, float], attribs: dict[str, Any]) -> None:
+        self._position = position
+        self._attribs = attribs
+
+    def position(self) -> tuple[float, float, float]:
+        return self._position
+
+    def attribValue(self, name: str) -> Any:
+        if name not in self._attribs:
+            raise KeyError(name)
+        return self._attribs[name]
+
+
+def _identity3() -> tuple[float, ...]:
+    return (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
 
 
 class FakeSeverityType:

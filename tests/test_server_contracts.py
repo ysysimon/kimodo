@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from threading import Event
@@ -32,6 +33,30 @@ def test_generation_request_to_dict_preserves_defaults():
     assert data["bvh_standard_tpose"] is True
     assert data["zip_output"] is False
     assert data["postprocess"] is True
+    assert data["output_world_offset"] is None
+
+
+def test_generation_request_to_dict_preserves_constraints():
+    constraints = [
+        {
+            "type": "root2d",
+            "frame_indices": [0],
+            "smooth_root_2d": [[0.0, 0.0]],
+        }
+    ]
+    request = GenerationRequest(texts=["walk"], durations=[1.0], constraints=constraints)
+
+    data = request.to_dict()
+
+    assert data["constraints"] == constraints
+
+
+def test_generation_request_to_dict_preserves_output_world_offset():
+    request = GenerationRequest(texts=["walk"], durations=[1.0], output_world_offset=[1.0, 0.0, -2.0])
+
+    data = request.to_dict()
+
+    assert data["output_world_offset"] == [1.0, 0.0, -2.0]
 
 
 def test_job_record_round_trips_status_and_artifact_metadata():
@@ -72,15 +97,24 @@ def test_storage_writes_request_and_status_round_trip(tmp_path):
     storage = JobStorage(str(tmp_path))
     job_id = "job-1"
     storage.create_job_dir(job_id)
-    request = GenerationRequest(texts=["walk"], durations=[1.0])
+    constraints = [
+        {
+            "type": "root2d",
+            "frame_indices": [0],
+            "smooth_root_2d": [[0.0, 0.0]],
+        }
+    ]
+    request = GenerationRequest(texts=["walk"], durations=[1.0], constraints=constraints)
     record = JobRecord(job_id=job_id, status=JobStatus.QUEUED, job_dir=str(storage.job_dir(job_id)))
 
     storage.write_request(job_id, request)
     storage.write_status(record)
     restored = storage.read_status(job_id)
+    request_data = json.loads((storage.job_dir(job_id) / "request.json").read_text(encoding="utf-8"))
 
     assert request.job_id == job_id
     assert (storage.job_dir(job_id) / "request.json").is_file()
+    assert request_data["constraints"] == constraints
     assert restored.status == JobStatus.QUEUED
     assert restored.job_dir == str(storage.job_dir(job_id))
 

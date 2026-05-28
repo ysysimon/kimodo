@@ -91,6 +91,144 @@ def test_submit_accepts_bvh_standard_tpose(tmp_path):
     assert runtime.requests[0].bvh_standard_tpose is False
 
 
+def test_submit_accepts_output_world_offset(tmp_path):
+    runtime = CapturingRuntime()
+    app = create_fastapi_app(storage_root=str(tmp_path), runtime=runtime)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/jobs",
+            json={
+                "texts": ["A person walks forward."],
+                "durations": [1.0],
+                "formats": ["bvh"],
+                "output_world_offset": [1.0, 0.0, -2.0],
+            },
+        )
+        assert response.status_code == 202
+        submitted = response.json()
+        _wait_for_status(client, submitted["job_id"], JobStatus.SUCCEEDED)
+
+    assert len(runtime.requests) == 1
+    assert runtime.requests[0].output_world_offset == [1.0, 0.0, -2.0]
+
+
+@pytest.mark.parametrize("output_world_offset", [[1.0, 2.0], [1.0, 2.0, 3.0, 4.0], ["x", 0.0, 0.0]])
+def test_submit_rejects_invalid_output_world_offset(tmp_path, output_world_offset):
+    app = create_fastapi_app(storage_root=str(tmp_path), runtime=FakeRuntime())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/jobs",
+            json={
+                "texts": ["A person walks forward."],
+                "durations": [1.0],
+                "output_world_offset": output_world_offset,
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_submit_accepts_constraints_list_as_plain_dicts(tmp_path):
+    runtime = CapturingRuntime()
+    app = create_fastapi_app(storage_root=str(tmp_path), runtime=runtime)
+    constraints = [
+        _root2d_constraint(),
+        _pose_constraint("right-hand"),
+        _pose_constraint("end-effector", joint_names=["LeftHand", "RightFoot"]),
+    ]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/jobs",
+            json={
+                "texts": ["A person walks forward."],
+                "durations": [1.0],
+                "formats": ["npz"],
+                "constraints": constraints,
+            },
+        )
+        assert response.status_code == 202
+        submitted = response.json()
+        _wait_for_status(client, submitted["job_id"], JobStatus.SUCCEEDED)
+
+    assert len(runtime.requests) == 1
+    assert runtime.requests[0].constraints == constraints
+
+
+def test_submit_accepts_constraints_path_string(tmp_path):
+    runtime = CapturingRuntime()
+    app = create_fastapi_app(storage_root=str(tmp_path), runtime=runtime)
+    constraints_path = str(tmp_path / "constraints.json")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/jobs",
+            json={
+                "texts": ["A person walks forward."],
+                "durations": [1.0],
+                "formats": ["npz"],
+                "constraints": constraints_path,
+            },
+        )
+        assert response.status_code == 202
+        submitted = response.json()
+        _wait_for_status(client, submitted["job_id"], JobStatus.SUCCEEDED)
+
+    assert len(runtime.requests) == 1
+    assert runtime.requests[0].constraints == constraints_path
+
+
+@pytest.mark.parametrize(
+    "constraints",
+    [
+        [{"type": "unknown", "frame_indices": [0]}],
+        [{"type": "root2d", "frame_indices": [0]}],
+        [{"type": "root2d", "frame_indices": [0], "smooth_root_2d": [[0.0, 0.0, 0.0]]}],
+        [{"type": "root2d", "frame_indices": [0], "smooth_root_2d": [[0.0, 0.0]], "extra": True}],
+        [
+            {
+                "type": "root2d",
+                "frame_indices": [0, 1],
+                "smooth_root_2d": [[0.0, 0.0]],
+            }
+        ],
+        [
+            {
+                "type": "fullbody",
+                "frame_indices": [0],
+                "root_positions": [[0.0, 0.95, 0.0]],
+                "local_joints_rot": [[[0.0, 0.0]]],
+            }
+        ],
+        [
+            {
+                "type": "end-effector",
+                "joint_names": ["left_hand"],
+                "frame_indices": [0],
+                "root_positions": [[0.0, 0.95, 0.0]],
+                "local_joints_rot": [[[0.0, 0.0, 0.0]]],
+            }
+        ],
+    ],
+)
+def test_submit_rejects_invalid_constraints(tmp_path, constraints):
+    app = create_fastapi_app(storage_root=str(tmp_path), runtime=FakeRuntime())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/jobs",
+            json={
+                "texts": ["A person walks forward."],
+                "durations": [1.0],
+                "constraints": constraints,
+            },
+        )
+
+    assert response.status_code == 422
+
+
 def test_download_artifact_returns_file(tmp_path):
     app = create_fastapi_app(storage_root=str(tmp_path), runtime=FakeRuntime())
 
@@ -267,3 +405,37 @@ def _wait_for_status(client: TestClient, job_id: str, status: JobStatus) -> dict
             return record
         time.sleep(0.01)
     pytest.fail(f"Timed out waiting for job {job_id} to reach {status.value}")
+
+
+def _root2d_constraint() -> dict:
+    return {
+        "type": "root2d",
+        "frame_indices": [0, 30],
+        "smooth_root_2d": [[0.0, 0.0], [1.0, 0.2]],
+        "global_root_heading": [[1.0, 0.0], [0.0, 1.0]],
+    }
+
+
+def _pose_constraint(
+    constraint_type: str,
+    *,
+    joint_names: list[str] | None = None,
+    local_joints_rot: list | None = None,
+) -> dict:
+    constraint = {
+        "type": constraint_type,
+        "frame_indices": [0],
+        "root_positions": [[0.0, 0.95, 0.0]],
+        "smooth_root_2d": [[0.0, 0.0]],
+        "local_joints_rot": local_joints_rot
+        if local_joints_rot is not None
+        else [
+            [
+                [0.0, 0.0, 0.0],
+                [0.01, 0.0, 0.0],
+            ]
+        ],
+    }
+    if joint_names is not None:
+        constraint["joint_names"] = joint_names
+    return constraint

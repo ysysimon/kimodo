@@ -43,6 +43,7 @@ class GenerationRequest:
     postprocess: bool = True
     root_margin: float = 0.04
     constraints: Any | None = None
+    output_world_offset: list[float] | None = None
     job_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:

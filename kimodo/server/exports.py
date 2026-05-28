@@ -70,6 +70,7 @@ def save_bvh_artifacts(
     device: str | torch.device,
     job_id: str | None = None,
     standard_tpose: bool = True,
+    output_world_offset: list[float] | tuple[float, float, float] | None = None,
 ) -> dict[str, ArtifactRecord]:
     """Save SOMA motion as BVH.
 
@@ -82,6 +83,7 @@ def save_bvh_artifacts(
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     export_skeleton = skeleton.somaskel77.to(device) if isinstance(skeleton, SOMASkeleton30) else skeleton
     n_samples = int(motion["posed_joints"].shape[0])
+    world_offset = _world_offset_tensor(output_world_offset, device=device)
 
     def save_one(sample_idx: int, sample_path: Path) -> Path:
         sample_path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +91,8 @@ def save_bvh_artifacts(
         joints_rot = torch.as_tensor(motion["global_rot_mats"][sample_idx], device=device)
         local_rot_mats = global_rots_to_local_rots(joints_rot, export_skeleton)
         root_positions = joints_pos[:, export_skeleton.root_idx, :]
+        if world_offset is not None:
+            root_positions = root_positions + world_offset.to(dtype=root_positions.dtype)
         save_motion_bvh(
             sample_path,
             local_rot_mats,
@@ -116,6 +120,20 @@ def save_bvh_artifacts(
         )
         for sample_idx, bvh_path in enumerate(bvh_paths)
     }
+
+
+def _world_offset_tensor(
+    output_world_offset: list[float] | tuple[float, float, float] | None,
+    *,
+    device: str | torch.device,
+) -> torch.Tensor | None:
+    if output_world_offset is None:
+        return None
+    if len(output_world_offset) != 3:
+        raise ValueError("output_world_offset must be a 3D vector.")
+    if all(abs(float(component)) <= 1e-8 for component in output_world_offset):
+        return None
+    return torch.as_tensor(output_world_offset, device=device, dtype=torch.float32)
 
 
 def save_zip_artifact(
