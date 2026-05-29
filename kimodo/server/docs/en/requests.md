@@ -331,6 +331,19 @@ These four set types are `end-effector` shorthands. They use the same fields as
 `fullbody`, but internally only use the corresponding hand/foot end-effector
 targets from the complete pose.
 
+During denoising conditioning, each shorthand is effectively equivalent to
+`end-effector` with one matching `joint_names` value. For example,
+`type: "left-hand"` uses the same left-hand target indices as
+`type: "end-effector", joint_names: ["LeftHand"]`.
+
+The difference is in motion post-processing. The shorthand types create the
+corresponding `LeftHand` / `RightHand` / `LeftFoot` / `RightFoot` masks, so
+MotionCorrection can pin that end-effector back to the target frame with IK.
+The generic `end-effector` type is not currently expanded into these per-limb
+postprocess masks. With `postprocess: true`, it still conditions the model, but
+does not trigger the extra hand/foot IK pin. Prefer the shorthand types when a
+single hand or foot target should also be enforced by post-processing.
+
 Required fields:
 
 - `type`: `"left-hand"`, `"right-hand"`, `"left-foot"`, or `"right-foot"`
@@ -381,6 +394,13 @@ once. Current `joint_names` values use these names:
 ```json
 ["LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"]
 ```
+
+Note: `end-effector` is the generic grouped form. In denoising conditioning,
+`joint_names: ["LeftHand"]` uses the same target indices as `left-hand`; in
+motion post-processing, however, it is not automatically mapped to the
+`LeftHand` shorthand mask. Therefore, with `postprocess: true`, `left-hand`
+gets an additional left-hand IK correction, while `end-effector` +
+`["LeftHand"]` relies on the model generation stage to satisfy that target.
 
 Required fields:
 

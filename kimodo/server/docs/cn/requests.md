@@ -276,6 +276,10 @@ Optional 字段：
 
 这四个 set type 是 `end-effector` 的 shorthand。字段与 `fullbody` 相同，但内部只使用完整 pose 中对应 hand/foot end-effector 相关目标。
 
+和 `end-effector` 配合单个同名 `joint_names` 使用时，它们在模型 denoising 的 conditioning 阶段基本等价。例如 `type: "left-hand"` 会使用和 `type: "end-effector", joint_names: ["LeftHand"]` 相同的左手目标索引。
+
+区别在 motion post-processing 阶段：shorthand 类型会生成对应的 `LeftHand` / `RightHand` / `LeftFoot` / `RightFoot` mask，并让 MotionCorrection 用 IK 将该 end-effector 拉回目标帧。通用 `end-effector` 目前不会展开成这些 per-limb postprocess mask；如果 `postprocess: true`，它仍会参与模型 conditioning，但不会触发对应手/脚的额外 IK pin。需要单个手或脚目标并希望 post-processing 也强制贴合时，优先使用这些 shorthand 类型。
+
 必须字段：
 
 - `type`: `"left-hand"`、`"right-hand"`、`"left-foot"` 或 `"right-foot"`
@@ -324,6 +328,8 @@ Optional 字段：
 ```json
 ["LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"]
 ```
+
+注意：`end-effector` 是通用组合形式，适合一次指定多个 group。在 denoising conditioning 中，`joint_names: ["LeftHand"]` 和 `left-hand` 使用相同的目标索引；但在 motion post-processing 中不会自动映射到 `LeftHand` shorthand mask。因此 `postprocess: true` 时，`left-hand` 会额外触发左手 IK 修正，`end-effector` + `["LeftHand"]` 只依赖模型生成阶段满足该约束。
 
 必须字段：
 
