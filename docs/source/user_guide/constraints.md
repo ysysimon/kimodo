@@ -77,9 +77,31 @@ These use the same fields as `fullbody`. However, under the hood these will only
 ### `end-effector`
 A general end-effector constraint that requires an additional field:
 
-- `joint_names` (array of strings): Which end-effectors to constrain (e.g. `["left_hand"]`, `["right_foot", "left_foot"]`). Available names depend on the skeleton; see the skeleton's `expand_joint_names()` for the full mapping.
+- `joint_names` (array of strings): Which end-effectors to constrain (e.g. `["LeftHand"]`, `["RightFoot", "LeftFoot"]`). Available names depend on the skeleton; see the skeleton's `expand_joint_names()` for the full mapping.
 
 Otherwise uses the same fields as `fullbody` (`local_joints_rot`, `root_positions`, optional `smooth_root_2d`).
+
+## Houdini Packed KineFX Pose Constraints
+
+The Houdini plugin can convert packed KineFX pose geometry into the JSON fields above. Root 2D constraints still use `OUT_ROOT2D_CONSTRAINTS`; pose constraints are read from these HDA-internal NULL nodes:
+
+- `OUT_FULLBODY_CONSTRAINTS` -> `fullbody`
+- `OUT_END_EFFECTOR_CONSTRAINTS` -> `end-effector`
+- `OUT_left_hand_CONSTRAINTS` -> `left-hand`
+- `OUT_right-hand_CONSTRAINTS` -> `right-hand`
+- `OUT_left-foot_CONSTRAINTS` -> `left-foot`
+- `OUT_right-foot_CONSTRAINTS` -> `right-foot`
+
+Each output geometry should contain one packed primitive per constrained frame. The packed primitive's outer point carries `frame`; for `OUT_END_EFFECTOR_CONSTRAINTS` it also carries `joint_names`. Because the backend expects one constant `joint_names` list per `end-effector` set, the plugin groups packed primitives by canonicalized `joint_names` and emits one JSON constraint set per group.
+
+The embedded packed geometry must be a complete KineFX pose. Each inner point must have:
+
+- `origin_name`: joint name used to reorder points into the Kimodo skeleton order.
+- `localtransform`: Houdini row-major 4x4 local transform.
+
+The plugin extracts the local rotation from the upper-left 3x3 of `localtransform`, transposes that 3x3 from Houdini's row-vector convention into the backend's column-vector convention, and converts it to axis-angle for `local_joints_rot`. It extracts root translation from row 4 columns 1-3 of the root joint transform, subtracts `output_world_offset`, and writes that value to `root_positions`; non-root local translations are ignored.
+
+If the embedded pose contains an extra `Root` point in addition to the complete Kimodo skeleton, `Root.localtransform` is treated as the parent transform of the Kimodo root joint. This is useful when Houdini keeps unit conversion or scene placement on `Root` and the Kimodo root joint, such as `Hips`, stores a local offset in centimeters.
 
 ## Examples
 

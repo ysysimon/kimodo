@@ -9,7 +9,7 @@ from torch import Tensor
 
 from kimodo.motion_rep.feature_utils import compute_heading_angle
 from kimodo.skeleton import SkeletonBase, SOMASkeleton30, SOMASkeleton77
-from kimodo.tools import ensure_batched, load_json, save_json
+from kimodo.tools import load_json, save_json
 
 from .geometry import axis_angle_to_matrix, matrix_to_axis_angle
 
@@ -37,6 +37,7 @@ def _convert_constraint_local_rots_to_skeleton(local_rot_mats: Tensor, skeleton:
 
 def create_pairs(tensor_A: Tensor, tensor_B: Tensor) -> Tensor:
     """Form all (a, b) pairs from two 1D tensors; output shape (len(A)*len(B), 2)."""
+    tensor_B = tensor_B.to(device=tensor_A.device, dtype=tensor_A.dtype)
     pairs = torch.stack(
         (
             tensor_A[:, None].expand(-1, len(tensor_B)),
@@ -88,9 +89,9 @@ class Root2DConstraintSet:
     ) -> None:
         self.skeleton = skeleton
 
-        # if we pass the full smooth root 3D as input
+        # If a full 3D smooth root position is provided, keep planar X/Z.
         if smooth_root_2d.shape[-1] == 3:
-            smooth_root_2d = smooth_root_2d[..., [0, 1]]
+            smooth_root_2d = smooth_root_2d[..., [0, 2]]
 
         if to_crop:
             smooth_root_2d = smooth_root_2d[frame_indices]
@@ -196,9 +197,9 @@ class FullBodyConstraintSet:
         self.skeleton = skeleton
         self.frame_indices = frame_indices
 
-        # if we pass the full smooth root 3D as input
+        # If a full 3D smooth root position is provided, keep planar X/Z.
         if smooth_root_2d is not None and smooth_root_2d.shape[-1] == 3:
-            smooth_root_2d = smooth_root_2d[..., [0, 1]]
+            smooth_root_2d = smooth_root_2d[..., [0, 2]]
 
         if to_crop:
             global_joints_positions = global_joints_positions[frame_indices]
@@ -348,12 +349,20 @@ class EndEffectorConstraintSet:
         # joint_names are constant for all the frames
         rot_joint_names, pos_joint_names = self.skeleton.expand_joint_names(self.joint_names)
         # indexing works for motion_rep with smooth root only (contains pelvis index)
-        self.pos_indices = torch.tensor([self.skeleton.bone_index[jname] for jname in pos_joint_names])
-        self.rot_indices = torch.tensor([self.skeleton.bone_index[jname] for jname in rot_joint_names])
+        self.pos_indices = torch.tensor(
+            [self.skeleton.bone_index[jname] for jname in pos_joint_names],
+            device=frame_indices.device,
+            dtype=frame_indices.dtype,
+        )
+        self.rot_indices = torch.tensor(
+            [self.skeleton.bone_index[jname] for jname in rot_joint_names],
+            device=frame_indices.device,
+            dtype=frame_indices.dtype,
+        )
 
-        # if we pass the full smooth root 3D as input
+        # If a full 3D smooth root position is provided, keep planar X/Z.
         if smooth_root_2d is not None and smooth_root_2d.shape[-1] == 3:
-            smooth_root_2d = smooth_root_2d[..., [0, 1]]
+            smooth_root_2d = smooth_root_2d[..., [0, 2]]
 
         if to_crop:
             global_joints_positions = global_joints_positions[frame_indices]

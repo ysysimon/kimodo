@@ -12,7 +12,12 @@ from remote_motion_client import RemoteMotionClient
 
 from .cache import default_download_dir
 from .config import get_server_url
-from .constraints import DEFAULT_ROOT2D_CONSTRAINT_NODE, root2d_constraint_from_geometry
+from .constraints import (
+    DEFAULT_ROOT2D_CONSTRAINT_NODE,
+    POSE_CONSTRAINT_NODES,
+    pose_constraints_from_geometry,
+    root2d_constraint_from_geometry,
+)
 from .importer import format_houdini_path, refresh_mocap_import
 
 
@@ -64,7 +69,7 @@ def generate_motion(kwargs: dict[str, Any]) -> Path:
     output_world_offset = _output_world_offset(node)
     if _is_nonzero_vector(output_world_offset):
         payload["output_world_offset"] = list(output_world_offset)
-    _apply_root2d_constraints(node, payload)
+    _apply_constraints(node, payload, output_world_offset)
 
     client = RemoteMotionClient(server_url)
     submitted = client.submit(payload)
@@ -140,29 +145,51 @@ def _apply_optional_generation_parms(node, payload: dict[str, Any]) -> None:
         payload["num_transition_frames"] = int(num_transition_frames)
 
 
-def _apply_root2d_constraints(node, payload: dict[str, Any]) -> None:
+def _apply_constraints(
+    node,
+    payload: dict[str, Any],
+    output_world_offset: tuple[float, float, float],
+) -> None:
     if not _eval_bool_parm(node, "enable_constraints", False):
         return
 
-    geometry = _root2d_constraint_geometry(node)
-    if geometry is None:
-        return
+    constraints: list[dict[str, Any]] = []
+    warnings: list[str] = []
 
-    constraint, warnings = root2d_constraint_from_geometry(
-        geometry,
-        frame_origin=float(_eval_parm(node, "frame_origin", 1)),
-        include_heading=_eval_bool_parm(node, "include_heading", True),
-        heading_forward_axis=str(_eval_menu_token(node, "heading_forward_axis", "+Z")),
-        nonplanar_y_tolerance=float(_eval_parm(node, "nonplanar_y_tolerance", 0.001)),
-        output_world_offset=_output_world_offset(node),
-    )
-    if constraint is not None:
-        payload["constraints"] = [constraint]
+    geometry = _constraint_source_geometry(node, DEFAULT_ROOT2D_CONSTRAINT_NODE)
+    if geometry is not None:
+        constraint, root2d_warnings = root2d_constraint_from_geometry(
+            geometry,
+            frame_origin=float(_eval_parm(node, "frame_origin", 1)),
+            include_heading=_eval_bool_parm(node, "include_heading", True),
+            heading_forward_axis=str(_eval_menu_token(node, "heading_forward_axis", "+Z")),
+            nonplanar_y_tolerance=float(_eval_parm(node, "nonplanar_y_tolerance", 0.001)),
+            output_world_offset=output_world_offset,
+        )
+        if constraint is not None:
+            constraints.append(constraint)
+        warnings.extend(root2d_warnings)
+
+    for source_name, constraint_type in POSE_CONSTRAINT_NODES.items():
+        geometry = _constraint_source_geometry(node, source_name)
+        if geometry is None:
+            continue
+        pose_constraints, pose_warnings = pose_constraints_from_geometry(
+            geometry,
+            constraint_type,
+            frame_origin=float(_eval_parm(node, "frame_origin", 1)),
+            output_world_offset=output_world_offset,
+        )
+        constraints.extend(pose_constraints)
+        warnings.extend(pose_warnings)
+
+    if constraints:
+        payload["constraints"] = constraints
     _display_houdini_warnings(warnings)
 
 
-def _root2d_constraint_geometry(node):
-    source = _root2d_constraint_source_node(node)
+def _constraint_source_geometry(node, source_name: str):
+    source = _constraint_source_node(node, source_name)
     if source is None:
         return None
 
@@ -172,11 +199,11 @@ def _root2d_constraint_geometry(node):
     return geometry_method()
 
 
-def _root2d_constraint_source_node(node):
+def _constraint_source_node(node, source_name: str):
     child_method = getattr(node, "node", None)
     if callable(child_method):
         try:
-            return child_method(DEFAULT_ROOT2D_CONSTRAINT_NODE)
+            return child_method(source_name)
         except Exception:
             return None
     return None

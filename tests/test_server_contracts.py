@@ -10,7 +10,9 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+import torch
 
+from kimodo.constraints import create_pairs
 from kimodo.server.app import create_app
 from kimodo.server.jobs import JobManager
 from kimodo.server.runtime import FakeRuntime, TextEncoderServerConfig
@@ -37,13 +39,7 @@ def test_generation_request_to_dict_preserves_defaults():
 
 
 def test_generation_request_to_dict_preserves_constraints():
-    constraints = [
-        {
-            "type": "root2d",
-            "frame_indices": [0],
-            "smooth_root_2d": [[0.0, 0.0]],
-        }
-    ]
+    constraints = _multi_type_constraints_payload()
     request = GenerationRequest(texts=["walk"], durations=[1.0], constraints=constraints)
 
     data = request.to_dict()
@@ -97,13 +93,7 @@ def test_storage_writes_request_and_status_round_trip(tmp_path):
     storage = JobStorage(str(tmp_path))
     job_id = "job-1"
     storage.create_job_dir(job_id)
-    constraints = [
-        {
-            "type": "root2d",
-            "frame_indices": [0],
-            "smooth_root_2d": [[0.0, 0.0]],
-        }
-    ]
+    constraints = _multi_type_constraints_payload()
     request = GenerationRequest(texts=["walk"], durations=[1.0], constraints=constraints)
     record = JobRecord(job_id=job_id, status=JobStatus.QUEUED, job_dir=str(storage.job_dir(job_id)))
 
@@ -117,6 +107,64 @@ def test_storage_writes_request_and_status_round_trip(tmp_path):
     assert request_data["constraints"] == constraints
     assert restored.status == JobStatus.QUEUED
     assert restored.job_dir == str(storage.job_dir(job_id))
+
+
+def test_load_constraints_accepts_backend_supported_pose_constraint_types():
+    from kimodo.constraints import load_constraints_lst
+    from kimodo.skeleton import SOMASkeleton30
+
+    skeleton = SOMASkeleton30()
+
+    loaded = load_constraints_lst(_multi_type_constraints_payload(), skeleton)
+
+    assert [constraint.name for constraint in loaded] == [
+        "root2d",
+        "fullbody",
+        "end-effector",
+        "left-hand",
+    ]
+
+
+def test_create_pairs_moves_second_index_tensor_to_first_tensor_device():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required to exercise mixed CPU/CUDA index tensors.")
+
+    pairs = create_pairs(torch.tensor([1, 2], device="cuda:0"), torch.tensor([3, 4]))
+
+    assert pairs.device.type == "cuda"
+    assert pairs.cpu().tolist() == [[1, 3], [1, 4], [2, 3], [2, 4]]
+
+
+def test_constraint_sets_treat_3d_smooth_root_as_xz():
+    from kimodo.constraints import EndEffectorConstraintSet, FullBodyConstraintSet, Root2DConstraintSet
+    from kimodo.skeleton import SOMASkeleton30
+
+    skeleton = SOMASkeleton30()
+    frame_indices = torch.tensor([0])
+    smooth_root_3d = torch.tensor([[5.0, 6.0, 7.0]])
+    global_joints_positions = torch.zeros(1, skeleton.nbjoints, 3)
+    global_joints_rots = torch.eye(3).expand(1, skeleton.nbjoints, 3, 3)
+
+    root2d = Root2DConstraintSet(skeleton, frame_indices, smooth_root_3d)
+    fullbody = FullBodyConstraintSet(
+        skeleton,
+        frame_indices,
+        global_joints_positions,
+        global_joints_rots,
+        smooth_root_3d,
+    )
+    end_effector = EndEffectorConstraintSet(
+        skeleton,
+        frame_indices,
+        global_joints_positions,
+        global_joints_rots,
+        smooth_root_3d,
+        joint_names=["Hips"],
+    )
+
+    assert root2d.smooth_root_2d.tolist() == [[5.0, 7.0]]
+    assert fullbody.smooth_root_2d.tolist() == [[5.0, 7.0]]
+    assert end_effector.smooth_root_2d.tolist() == [[5.0, 7.0]]
 
 
 def test_storage_resolves_artifact_successfully(tmp_path):
@@ -275,3 +323,23 @@ def _wait_for_status(jobs: JobManager, job_id: str, status: JobStatus) -> JobRec
             return record
         time.sleep(0.01)
     pytest.fail(f"Timed out waiting for job {job_id} to reach {status.value}")
+
+
+def _multi_type_constraints_payload() -> list[dict]:
+    local_rots = [[[0.0, 0.0, 0.0] for _index in range(30)]]
+    pose_fields = {
+        "frame_indices": [0],
+        "local_joints_rot": local_rots,
+        "root_positions": [[0.0, 1.0, 0.0]],
+        "smooth_root_2d": [[0.0, 0.0]],
+    }
+    return [
+        {
+            "type": "root2d",
+            "frame_indices": [0],
+            "smooth_root_2d": [[0.0, 0.0]],
+        },
+        {"type": "fullbody", **pose_fields},
+        {"type": "end-effector", **pose_fields, "joint_names": ["RightFoot", "LeftHand"]},
+        {"type": "left-hand", **pose_fields},
+    ]

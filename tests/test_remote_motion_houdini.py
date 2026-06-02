@@ -5,9 +5,12 @@
 from __future__ import annotations
 
 import importlib
+import math
 import sys
 from pathlib import Path
 from typing import Any
+
+import torch
 
 
 def test_remote_motion_houdini_imports_without_hou(monkeypatch):
@@ -157,6 +160,222 @@ def test_root2d_constraint_parser_rejects_bad_frames(monkeypatch):
         raise AssertionError("Expected missing frame to raise Root2DConstraintParseError")
 
 
+def test_pose_constraint_parser_reads_packed_point_frame_and_row_major_localtransform(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    skeleton_order = ("Hips", "Chest")
+    pose_geo = FakeGeometry(
+        [
+            FakePoint((0.0, 0.0, 0.0), {"origin_name": "Chest", "localtransform": _identity4()}),
+            FakePoint((0.0, 0.0, 0.0), {"origin_name": "Hips", "localtransform": _z90_4(12.0, 3.0, 8.0)}),
+        ],
+        point_attribs={"origin_name", "localtransform"},
+    )
+    geo = FakeGeometry(
+        prims=[FakePackedPrimitive(FakePoint((0.0, 0.0, 0.0), {"frame": 20}), pose_geo)]
+    )
+
+    parsed, warnings = constraints.pose_constraints_from_geometry(
+        geo,
+        "fullbody",
+        frame_origin=1,
+        output_world_offset=(10.0, 1.0, 3.0),
+        skeleton_order=skeleton_order,
+    )
+
+    assert warnings == []
+    assert parsed[0]["type"] == "fullbody"
+    assert parsed[0]["frame_indices"] == [19]
+    assert parsed[0]["root_positions"] == [[2.0, 2.0, 5.0]]
+    assert parsed[0]["smooth_root_2d"] == [[2.0, 5.0]]
+    hips_axis_angle = parsed[0]["local_joints_rot"][0][0]
+    assert math.isclose(hips_axis_angle[0], 0.0, abs_tol=1e-8)
+    assert math.isclose(hips_axis_angle[1], 0.0, abs_tol=1e-8)
+    assert math.isclose(hips_axis_angle[2], -math.pi / 2.0, rel_tol=1e-8)
+    from kimodo.geometry import axis_angle_to_matrix
+
+    backend_matrix = axis_angle_to_matrix(torch.tensor(hips_axis_angle)).tolist()
+    expected_backend_matrix = [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+    assert _matrix_close(backend_matrix, expected_backend_matrix)
+    assert parsed[0]["local_joints_rot"][0][1] == [0.0, 0.0, 0.0]
+
+
+def test_pose_constraint_parser_groups_end_effectors_by_joint_names(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    skeleton_order = ("Hips", "Chest")
+    geo = FakeGeometry(
+        prims=[
+            _packed_pose_primitive(skeleton_order, 1, (0.0, 1.0, 0.0), joint_names=["RightFoot"]),
+            _packed_pose_primitive(
+                skeleton_order,
+                2,
+                (1.0, 1.0, 0.0),
+                joint_names=["LeftHand", "RightFoot"],
+            ),
+            _packed_pose_primitive(
+                skeleton_order,
+                3,
+                (2.0, 1.0, 0.0),
+                joint_names=["rightfoot", "lefthand"],
+            ),
+        ]
+    )
+
+    parsed, warnings = constraints.pose_constraints_from_geometry(
+        geo,
+        "end-effector",
+        frame_origin=1,
+        skeleton_order=skeleton_order,
+    )
+
+    assert warnings == []
+    assert len(parsed) == 2
+    assert parsed[0]["joint_names"] == ["RightFoot"]
+    assert parsed[0]["frame_indices"] == [0]
+    assert parsed[1]["joint_names"] == ["RightFoot", "LeftHand"]
+    assert parsed[1]["frame_indices"] == [1, 2]
+    assert parsed[1]["root_positions"] == [[1.0, 1.0, 0.0], [2.0, 1.0, 0.0]]
+
+
+def test_pose_constraint_parser_applies_extra_root_parent_transform(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    skeleton_order = ("Hips", "Chest")
+    pose_geo = FakeGeometry(
+        [
+            FakePoint((0.0, 0.0, 0.0), {"origin_name": "Root", "localtransform": _scale4(0.01)}),
+            FakePoint((0.0, 0.0, 0.0), {"origin_name": "Hips", "localtransform": _identity4(0.0, 100.0, 0.0)}),
+            FakePoint((0.0, 0.0, 0.0), {"origin_name": "Chest", "localtransform": _identity4()}),
+        ],
+        point_attribs={"origin_name", "localtransform"},
+    )
+    geo = FakeGeometry(
+        prims=[FakePackedPrimitive(FakePoint((0.0, 0.0, 0.0), {"frame": 1}), pose_geo)]
+    )
+
+    parsed, warnings = constraints.pose_constraints_from_geometry(
+        geo,
+        "fullbody",
+        skeleton_order=skeleton_order,
+    )
+
+    assert parsed[0]["frame_indices"] == [0]
+    assert parsed[0]["root_positions"] == [[0.0, 1.0, 0.0]]
+    assert parsed[0]["local_joints_rot"][0][0] == [0.0, 0.0, 0.0]
+    assert warnings == []
+
+
+def test_pose_constraint_parser_rejects_missing_joints_and_invalid_joint_names(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    missing = FakeGeometry(
+        prims=[
+            FakePackedPrimitive(
+                FakePoint((0.0, 0.0, 0.0), {"frame": 1}),
+                FakeGeometry(
+                    [FakePoint((0.0, 0.0, 0.0), {"origin_name": "Hips", "localtransform": _identity4()})],
+                    point_attribs={"origin_name", "localtransform"},
+                ),
+            )
+        ]
+    )
+    try:
+        constraints.pose_constraints_from_geometry(missing, "fullbody", skeleton_order=("Hips", "Chest"))
+    except constraints.PoseConstraintParseError as exc:
+        assert "missing skeleton joint" in str(exc)
+    else:
+        raise AssertionError("Expected missing skeleton joint to raise PoseConstraintParseError")
+
+    invalid_joint_names = FakeGeometry(
+        prims=[_packed_pose_primitive(("Hips", "Chest"), 1, (0.0, 1.0, 0.0), joint_names=["Elbow"])]
+    )
+    try:
+        constraints.pose_constraints_from_geometry(
+            invalid_joint_names,
+            "end-effector",
+            skeleton_order=("Hips", "Chest"),
+        )
+    except constraints.PoseConstraintParseError as exc:
+        assert "Unsupported end-effector joint name" in str(exc)
+    else:
+        raise AssertionError("Expected invalid joint_names to raise PoseConstraintParseError")
+
+
+def test_pose_constraint_parser_rejects_missing_attributes_and_duplicate_frames(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    skeleton_order = ("Hips", "Chest")
+    missing_frame = FakeGeometry(
+        prims=[
+            FakePackedPrimitive(
+                FakePoint((0.0, 0.0, 0.0), {}),
+                FakeGeometry(
+                    [
+                        FakePoint((0.0, 0.0, 0.0), {"origin_name": "Hips", "localtransform": _identity4()}),
+                        FakePoint((0.0, 0.0, 0.0), {"origin_name": "Chest", "localtransform": _identity4()}),
+                    ],
+                    point_attribs={"origin_name", "localtransform"},
+                ),
+            )
+        ]
+    )
+    try:
+        constraints.pose_constraints_from_geometry(missing_frame, "fullbody", skeleton_order=skeleton_order)
+    except constraints.PoseConstraintParseError as exc:
+        assert "outer point must have 'frame' attribute" in str(exc)
+    else:
+        raise AssertionError("Expected missing frame to raise PoseConstraintParseError")
+
+    missing_localtransform = FakeGeometry(
+        prims=[
+            FakePackedPrimitive(
+                FakePoint((0.0, 0.0, 0.0), {"frame": 1}),
+                FakeGeometry(
+                    [
+                        FakePoint((0.0, 0.0, 0.0), {"origin_name": "Hips", "localtransform": _identity4()}),
+                        FakePoint((0.0, 0.0, 0.0), {"origin_name": "Chest"}),
+                    ],
+                    point_attribs={"origin_name", "localtransform"},
+                ),
+            )
+        ]
+    )
+    try:
+        constraints.pose_constraints_from_geometry(
+            missing_localtransform,
+            "fullbody",
+            skeleton_order=skeleton_order,
+        )
+    except constraints.PoseConstraintParseError as exc:
+        assert "must have 'localtransform' attribute" in str(exc)
+    else:
+        raise AssertionError("Expected missing localtransform to raise PoseConstraintParseError")
+
+    duplicate_frames = FakeGeometry(
+        prims=[
+            _packed_pose_primitive(skeleton_order, 1, (0.0, 1.0, 0.0)),
+            _packed_pose_primitive(skeleton_order, 1, (1.0, 1.0, 0.0)),
+        ]
+    )
+    try:
+        constraints.pose_constraints_from_geometry(duplicate_frames, "fullbody", skeleton_order=skeleton_order)
+    except constraints.PoseConstraintParseError as exc:
+        assert "duplicate frame" in str(exc)
+    else:
+        raise AssertionError("Expected duplicate frame to raise PoseConstraintParseError")
+
+
 def test_generate_motion_reads_parms_downloads_and_refreshes(monkeypatch, tmp_path):
     from remote_motion_client.models import ArtifactInfo, JobInfo
 
@@ -239,6 +458,7 @@ def test_generate_motion_can_include_root2d_constraints(monkeypatch, tmp_path):
     plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
     monkeypatch.syspath_prepend(str(plugin_libs))
     callbacks = importlib.import_module("remote_motion_houdini.hda_callbacks")
+    constraints_module = importlib.import_module("remote_motion_houdini.constraints")
 
     calls: dict[str, Any] = {}
 
@@ -276,6 +496,21 @@ def test_generate_motion_can_include_root2d_constraints(monkeypatch, tmp_path):
         point_attribs={"frame", "transform"},
     )
     source = FakeSopNode(geo)
+    soma30_order = constraints_module._SOMA30_ORDER
+    fullbody_source = FakeSopNode(
+        FakeGeometry(prims=[_packed_pose_primitive(soma30_order, 2, (10.0, 1.0, 4.0))])
+    )
+    end_effector_source = FakeSopNode(
+        FakeGeometry(
+            prims=[
+                _packed_pose_primitive(soma30_order, 3, (11.0, 1.0, 4.0), joint_names=["RightFoot"]),
+                _packed_pose_primitive(soma30_order, 4, (12.0, 1.0, 4.0), joint_names=["LeftHand"]),
+            ]
+        )
+    )
+    left_hand_source = FakeSopNode(
+        FakeGeometry(prims=[_packed_pose_primitive(soma30_order, 5, (13.0, 1.0, 4.0))])
+    )
 
     monkeypatch.setattr(callbacks, "RemoteMotionClient", FakeClient)
     monkeypatch.setattr(callbacks, "default_download_dir", lambda job_id: tmp_path / job_id)
@@ -297,11 +532,17 @@ def test_generate_motion_can_include_root2d_constraints(monkeypatch, tmp_path):
             "nonplanar_y_tolerance": 0.001,
             "output_world_offset": (10.0, 0.0, 3.0),
         },
-        children={"OUT_ROOT2D_CONSTRAINTS": source},
+        children={
+            "OUT_ROOT2D_CONSTRAINTS": source,
+            "OUT_FULLBODY_CONSTRAINTS": fullbody_source,
+            "OUT_END_EFFECTOR_CONSTRAINTS": end_effector_source,
+            "OUT_left_hand_CONSTRAINTS": left_hand_source,
+        },
     )
 
     callbacks.generate_motion({"node": node})
 
+    zero_rots = [[0.0, 0.0, 0.0] for _name in soma30_order]
     assert calls["payload"]["output_world_offset"] == [10.0, 0.0, 3.0]
     assert calls["payload"]["constraints"] == [
         {
@@ -309,7 +550,37 @@ def test_generate_motion_can_include_root2d_constraints(monkeypatch, tmp_path):
             "frame_indices": [0, 19],
             "smooth_root_2d": [[0.0, 0.0], [2.0, 5.0]],
             "global_root_heading": [[1.0, 0.0], [1.0, 0.0]],
-        }
+        },
+        {
+            "type": "fullbody",
+            "frame_indices": [1],
+            "local_joints_rot": [zero_rots],
+            "root_positions": [[0.0, 1.0, 1.0]],
+            "smooth_root_2d": [[0.0, 1.0]],
+        },
+        {
+            "type": "end-effector",
+            "frame_indices": [2],
+            "local_joints_rot": [zero_rots],
+            "root_positions": [[1.0, 1.0, 1.0]],
+            "smooth_root_2d": [[1.0, 1.0]],
+            "joint_names": ["RightFoot"],
+        },
+        {
+            "type": "end-effector",
+            "frame_indices": [3],
+            "local_joints_rot": [zero_rots],
+            "root_positions": [[2.0, 1.0, 1.0]],
+            "smooth_root_2d": [[2.0, 1.0]],
+            "joint_names": ["LeftHand"],
+        },
+        {
+            "type": "left-hand",
+            "frame_indices": [4],
+            "local_joints_rot": [zero_rots],
+            "root_positions": [[3.0, 1.0, 1.0]],
+            "smooth_root_2d": [[3.0, 1.0]],
+        },
     ]
 
 
@@ -353,6 +624,7 @@ def test_generate_motion_skips_root2d_constraints_when_disabled(monkeypatch, tmp
     monkeypatch.setattr(callbacks, "refresh_mocap_import", lambda node, artifact_path: True)
 
     geo = FakeGeometry([FakePoint((0.0, 0.0, 0.0), {"frame": 1})], point_attribs={"frame"})
+    packed_geo = FakeGeometry(prims=[_packed_pose_primitive(("Hips", "Chest"), 1, (0.0, 1.0, 0.0))])
     node = FakeNode(
         {
             "server_url": "http://127.0.0.1:8000",
@@ -363,7 +635,10 @@ def test_generate_motion_skips_root2d_constraints_when_disabled(monkeypatch, tmp
             "wait_timeout": "",
             "enable_constraints": False,
         },
-        children={"OUT_ROOT2D_CONSTRAINTS": FakeSopNode(geo)},
+        children={
+            "OUT_ROOT2D_CONSTRAINTS": FakeSopNode(geo),
+            "OUT_FULLBODY_CONSTRAINTS": FakeSopNode(packed_geo),
+        },
     )
 
     callbacks.generate_motion({"node": node})
@@ -872,15 +1147,37 @@ class FakeSopNode:
 
 
 class FakeGeometry:
-    def __init__(self, points: list["FakePoint"], *, point_attribs: set[str]) -> None:
-        self._points = points
-        self._point_attribs = point_attribs
+    def __init__(
+        self,
+        points: list["FakePoint"] | None = None,
+        *,
+        point_attribs: set[str] | None = None,
+        prims: list[Any] | None = None,
+    ) -> None:
+        self._points = points or []
+        self._point_attribs = point_attribs or set()
+        self._prims = prims or []
 
     def points(self) -> list["FakePoint"]:
         return self._points
 
+    def prims(self) -> list[Any]:
+        return self._prims
+
     def findPointAttrib(self, name: str):
         return name if name in self._point_attribs else None
+
+
+class FakePackedPrimitive:
+    def __init__(self, packed_point: "FakePoint", embedded_geometry: FakeGeometry) -> None:
+        self._packed_point = packed_point
+        self._embedded_geometry = embedded_geometry
+
+    def points(self) -> list["FakePoint"]:
+        return [self._packed_point]
+
+    def getEmbeddedGeometry(self) -> FakeGeometry:
+        return self._embedded_geometry
 
 
 class FakePoint:
@@ -899,6 +1196,73 @@ class FakePoint:
 
 def _identity3() -> tuple[float, ...]:
     return (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def _identity4(tx: float = 0.0, ty: float = 0.0, tz: float = 0.0) -> tuple[float, ...]:
+    return (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, tx, ty, tz, 1.0)
+
+
+def _z90_4(tx: float = 0.0, ty: float = 0.0, tz: float = 0.0) -> tuple[float, ...]:
+    return (0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, tx, ty, tz, 1.0)
+
+
+def _scale4(scale: float) -> tuple[float, ...]:
+    return (
+        scale,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        scale,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        scale,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    )
+
+
+def _matrix_close(left: list[list[float]], right: list[list[float]], *, tolerance: float = 2e-6) -> bool:
+    return all(
+        abs(left[row][col] - right[row][col]) <= tolerance
+        for row in range(len(left))
+        for col in range(len(left[row]))
+    )
+
+
+def _packed_pose_primitive(
+    skeleton_order: tuple[str, ...],
+    frame: int,
+    root_position: tuple[float, float, float],
+    *,
+    joint_names: list[str] | None = None,
+) -> FakePackedPrimitive:
+    pose_points = []
+    root_name = skeleton_order[0]
+    for joint_name in skeleton_order:
+        transform = _identity4(*root_position) if joint_name == root_name else _identity4()
+        pose_points.append(
+            FakePoint(
+                (0.0, 0.0, 0.0),
+                {
+                    "origin_name": joint_name,
+                    "localtransform": transform,
+                },
+            )
+        )
+
+    packed_attribs: dict[str, Any] = {"frame": frame}
+    if joint_names is not None:
+        packed_attribs["joint_names"] = joint_names
+    return FakePackedPrimitive(
+        FakePoint((0.0, 0.0, 0.0), packed_attribs),
+        FakeGeometry(pose_points, point_attribs={"origin_name", "localtransform"}),
+    )
 
 
 class FakeSeverityType:
