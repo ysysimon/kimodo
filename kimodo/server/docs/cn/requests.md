@@ -179,7 +179,14 @@ HTTP 请求中推荐把 `constraints` 作为 JSON-compatible list 直接放进 `
 }
 ```
 
-下面示例中的 `"... repeat until J joints ..."` / `"... J joints ..."` 只是为了说明形状，不是可直接提交的合法值。真实请求里的 `local_joints_rot` 必须是纯数字嵌套数组，形状为 `[T, J, 3]`，其中 `J` 必须等于目标模型 skeleton 的 joint 数量，例如 SOMA30 是 `30`，SOMA77 是 `77`，G1 是 `34`。
+下面示例中的 `"... repeat until J joints ..."` / `"... J joints ..."` 只是为了说明形状，不是可直接提交的合法值。真实请求里的 pose 数组必须是纯数字嵌套数组。
+
+pose-based constraints 支持且只能使用下面两种输入形式之一：
+
+- Legacy FK 输入：`root_positions: [T, 3]` 加 `local_joints_rot: [T, J, 3]`，其中 rotation 是 axis-angle radians。Kimodo 会先跑 FK 得到 world-space joint targets。
+- World-space 输入：`global_joints_positions: [T, J, 3]`，可选 `global_joints_rots: [T, J, 3, 3]`。Kimodo 会直接使用传入的世界坐标，不会为该 constraint 跑 FK。
+
+两种形式中的 `J` 都必须等于目标模型 skeleton 的 joint 数量，例如 SOMA30 是 `30`，SOMA77 是 `77`，G1 是 `34`。World-space positions 目前要求 joint 数量严格匹配；SOMA30/SOMA77 自动转换只支持 legacy local-rotation 输入。
 
 通用坐标规则：
 
@@ -188,21 +195,23 @@ HTTP 请求中推荐把 `constraints` 作为 JSON-compatible list 直接放进 `
 - 位置单位是米。
 - `smooth_root_2d` 是 `[x, z]`，相对 canonical origin；通常第 0 帧附近是 `[0.0, 0.0]`。
 - `root_positions` 是 `[x, y, z]`，其中 `y` 是 root/hips 高度。
+- `global_joints_positions` 使用和输出 `posed_joints` 相同的 Kimodo world frame：米制、Y-up。
 - `global_root_heading` 不是 radians，而是 `[cos(theta), sin(theta)]`。
+- `output_world_offset` 只影响导出的 artifact，不会自动作用到输入 constraints。
 
 ### Constraint set 总览
 
 | `type` | 必须字段 | Optional 字段 | 说明 |
 | --- | --- | --- | --- |
 | `root2d` | `frame_indices`, `smooth_root_2d` | `global_root_heading` | 约束 smoothed root 在 XZ 地面平面的路径或 waypoint。 |
-| `fullbody` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | 通过完整 pose keyframe 约束全身 joint positions。 |
-| `left-hand` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | `end-effector` 的 shorthand，只约束左手相关 end-effector 和 root/hips。 |
-| `right-hand` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | `end-effector` 的 shorthand，只约束右手相关 end-effector 和 root/hips。 |
-| `left-foot` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | `end-effector` 的 shorthand，只约束左脚相关 end-effector 和 root/hips。 |
-| `right-foot` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | `end-effector` 的 shorthand，只约束右脚相关 end-effector 和 root/hips。 |
-| `end-effector` | `frame_indices`, `joint_names`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | 通用 end-effector constraint，可一次指定多个 semantic end-effector group。 |
+| `fullbody` | `frame_indices` 加一种 pose 输入形式 | `smooth_root_2d` | 通过完整 pose keyframe 或直接 world-space positions 约束全身 joint positions。 |
+| `left-hand` | `frame_indices` 加一种 pose 输入形式 | `smooth_root_2d` | `end-effector` 的 shorthand，只约束左手相关 end-effector 和 root/hips。 |
+| `right-hand` | `frame_indices` 加一种 pose 输入形式 | `smooth_root_2d` | `end-effector` 的 shorthand，只约束右手相关 end-effector 和 root/hips。 |
+| `left-foot` | `frame_indices` 加一种 pose 输入形式 | `smooth_root_2d` | `end-effector` 的 shorthand，只约束左脚相关 end-effector 和 root/hips。 |
+| `right-foot` | `frame_indices` 加一种 pose 输入形式 | `smooth_root_2d` | `end-effector` 的 shorthand，只约束右脚相关 end-effector 和 root/hips。 |
+| `end-effector` | `frame_indices`, `joint_names` 加一种 pose 输入形式 | `smooth_root_2d` | 通用 end-effector constraint，可一次指定多个 semantic end-effector group。 |
 
-除 `root2d` 外，pose-based constraint set 都需要 `root_positions` 和完整 skeleton 的 `local_joints_rot`。这些 set 不是直接传某个手/脚的 XYZ target；它们会先用完整 pose 做 FK，再从中抽取对应的全身或 end-effector 目标。
+除 `root2d` 外，pose-based constraint set 仍然描述当前模型 skeleton 的完整 pose。具体 `type` 决定内部使用哪些目标：`fullbody` 使用全部 joint positions，end-effector 类型会抽取对应手/脚/root 目标。World-space 输入时也要传完整 `global_joints_positions`，不是只传单个手或脚的 XYZ。
 
 ### `root2d`
 
@@ -249,12 +258,14 @@ Optional 字段：
 
 - `type`: `"fullbody"`
 - `frame_indices`: `[T]`
-- `root_positions`: `[T, 3]`，每项为 `[x, y, z]`
-- `local_joints_rot`: `[T, J, 3]`，axis-angle radians
+- 一种 pose 输入形式：
+  - `root_positions`: `[T, 3]` 加 `local_joints_rot`: `[T, J, 3]`
+  - 或 `global_joints_positions`: `[T, J, 3]`
 
 Optional 字段：
 
-- `smooth_root_2d`: `[T, 2]`，每项为 `[x, z]`。如果省略，runtime 会使用 `root_positions` 的 XZ 分量。
+- `smooth_root_2d`: `[T, 2]`，每项为 `[x, z]`。如果省略，runtime 会使用 root joint 的 XZ 分量。
+- `global_joints_rots`: `[T, J, 3, 3]`，只和 `global_joints_positions` 一起使用。
 
 ```json
 {
@@ -266,6 +277,23 @@ Optional 字段：
     [
       [0.0, 0.0, 0.0],
       [0.02, 0.0, 0.0],
+      "... repeat until J joints ..."
+    ]
+  ]
+}
+```
+
+World-space positions-only 示例：
+
+```json
+{
+  "type": "fullbody",
+  "frame_indices": [60],
+  "smooth_root_2d": [[0.5, 2.0]],
+  "global_joints_positions": [
+    [
+      [0.5, 0.95, 2.0],
+      [0.5, 1.05, 2.0],
       "... repeat until J joints ..."
     ]
   ]
@@ -284,12 +312,14 @@ Optional 字段：
 
 - `type`: `"left-hand"`、`"right-hand"`、`"left-foot"` 或 `"right-foot"`
 - `frame_indices`: `[T]`
-- `root_positions`: `[T, 3]`
-- `local_joints_rot`: `[T, J, 3]`
+- 一种 pose 输入形式：
+  - `root_positions`: `[T, 3]` 加 `local_joints_rot`: `[T, J, 3]`
+  - 或 `global_joints_positions`: `[T, J, 3]`
 
 Optional 字段：
 
-- `smooth_root_2d`: `[T, 2]`。如果省略，runtime 会使用 `root_positions` 的 XZ 分量。
+- `smooth_root_2d`: `[T, 2]`。如果省略，runtime 会使用 root joint 的 XZ 分量。
+- `global_joints_rots`: `[T, J, 3, 3]`，只和 `global_joints_positions` 一起使用。
 
 ```json
 {
@@ -336,12 +366,16 @@ Optional 字段：
 - `type`: `"end-effector"`
 - `joint_names`: `list[str]`
 - `frame_indices`: `[T]`
-- `root_positions`: `[T, 3]`
-- `local_joints_rot`: `[T, J, 3]`
+- 一种 pose 输入形式：
+  - `root_positions`: `[T, 3]` 加 `local_joints_rot`: `[T, J, 3]`
+  - 或 `global_joints_positions`: `[T, J, 3]`
 
 Optional 字段：
 
-- `smooth_root_2d`: `[T, 2]`。如果省略，runtime 会使用 `root_positions` 的 XZ 分量。
+- `smooth_root_2d`: `[T, 2]`。如果省略，runtime 会使用 root joint 的 XZ 分量。
+- `global_joints_rots`: `[T, J, 3, 3]`，只和 `global_joints_positions` 一起使用。
+
+如果只提供 `global_joints_positions` 而不提供 `global_joints_rots`，该 constraint 是 positions-only。它会约束 denoising 阶段的 position features 和 root 信息，但不会给 motion post-processing 提供 rotation targets。需要 post-processing 也 pin 住全身或 limb orientation 时，请使用 legacy 输入，或同时提供 `global_joints_rots`。
 
 ```json
 {

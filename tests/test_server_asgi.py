@@ -173,6 +173,33 @@ def test_submit_accepts_constraints_list_as_plain_dicts(tmp_path):
     assert runtime.requests[0].constraints == constraints
 
 
+def test_submit_accepts_world_space_constraints_list_as_plain_dicts(tmp_path):
+    runtime = CapturingRuntime()
+    app = create_fastapi_app(storage_root=str(tmp_path), runtime=runtime)
+    constraints = [
+        _world_pose_constraint("fullbody"),
+        _world_pose_constraint("end-effector", joint_names=["LeftHand", "RightFoot"], with_rots=True),
+        _world_pose_constraint("left-hand"),
+    ]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/jobs",
+            json={
+                "texts": ["A person walks forward."],
+                "durations": [1.0],
+                "formats": ["npz"],
+                "constraints": constraints,
+            },
+        )
+        assert response.status_code == 202
+        submitted = response.json()
+        _wait_for_status(client, submitted["job_id"], JobStatus.SUCCEEDED)
+
+    assert len(runtime.requests) == 1
+    assert runtime.requests[0].constraints == constraints
+
+
 def test_submit_accepts_constraints_path_string(tmp_path):
     runtime = CapturingRuntime()
     app = create_fastapi_app(storage_root=str(tmp_path), runtime=runtime)
@@ -225,6 +252,61 @@ def test_submit_accepts_constraints_path_string(tmp_path):
                 "frame_indices": [0],
                 "root_positions": [[0.0, 0.95, 0.0]],
                 "local_joints_rot": [[[0.0, 0.0, 0.0]]],
+            }
+        ],
+        [
+            {
+                "type": "fullbody",
+                "frame_indices": [0],
+                "root_positions": [[0.0, 0.95, 0.0]],
+                "local_joints_rot": [[[0.0, 0.0, 0.0]]],
+                "global_joints_positions": [[[0.0, 0.95, 0.0]]],
+            }
+        ],
+        [
+            {
+                "type": "fullbody",
+                "frame_indices": [0],
+                "global_joints_rots": [
+                    [
+                        [
+                            [1.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0],
+                            [0.0, 0.0, 1.0],
+                        ]
+                    ]
+                ],
+            }
+        ],
+        [
+            {
+                "type": "fullbody",
+                "frame_indices": [0, 1],
+                "global_joints_positions": [[[0.0, 0.0, 0.0]]],
+            }
+        ],
+        [
+            {
+                "type": "fullbody",
+                "frame_indices": [0],
+                "global_joints_positions": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
+                "global_joints_rots": [
+                    [
+                        [
+                            [1.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0],
+                            [0.0, 0.0, 1.0],
+                        ]
+                    ]
+                ],
+            }
+        ],
+        [
+            {
+                "type": "fullbody",
+                "frame_indices": [0],
+                "global_joints_positions": [[[0.0, 0.0, 0.0]]],
+                "global_joints_rots": [[[[1.0, 0.0, 0.0]]]],
             }
         ],
     ],
@@ -455,3 +537,35 @@ def _pose_constraint(
     if joint_names is not None:
         constraint["joint_names"] = joint_names
     return constraint
+
+
+def _world_pose_constraint(
+    constraint_type: str,
+    *,
+    joint_names: list[str] | None = None,
+    with_rots: bool = False,
+) -> dict:
+    constraint = {
+        "type": constraint_type,
+        "frame_indices": [0],
+        "smooth_root_2d": [[0.0, 0.0]],
+        "global_joints_positions": [
+            [
+                [0.0, 0.95, 0.0],
+                [0.1, 1.1, 0.0],
+            ]
+        ],
+    }
+    if with_rots:
+        constraint["global_joints_rots"] = [[_identity3(), _identity3()]]
+    if joint_names is not None:
+        constraint["joint_names"] = joint_names
+    return constraint
+
+
+def _identity3() -> list[list[float]]:
+    return [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ]

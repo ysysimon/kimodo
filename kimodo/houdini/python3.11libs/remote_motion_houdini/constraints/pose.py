@@ -19,6 +19,7 @@ from .geometry import (
 )
 from .skeletons import _KNOWN_SKELETON_ORDERS
 from .transforms import (
+    _matrix3_rows,
     _matrix4_multiply_row_major,
     _matrix4_rows,
     _matrix_to_axis_angle,
@@ -68,51 +69,96 @@ def pose_constraints_from_geometry(
 
         pose_geometry = _packed_embedded_geometry(primitive, prim_index)
         pose_points = _geometry_points_for_pose(pose_geometry, constraint_type)
-        raw_joints = _parse_pose_point_transforms(pose_points, constraint_type, prim_index)
+        raw_joints = _parse_pose_points(pose_points, constraint_type, prim_index)
 
         if inferred_order is None:
             inferred_order = _infer_skeleton_order(raw_joints.keys(), constraint_type, prim_index)
         root_parent_name = _root_parent_name(raw_joints)
-        ignored_joints = sorted(set(raw_joints) - set(inferred_order) - set(_ROOT_PARENT_NAMES))
+        ignored_joints = _unexpected_extra_joints(raw_joints.keys(), inferred_order)
         if ignored_joints:
             warnings.append(
                 f"{constraint_type} packed primitive {prim_index} has extra non-Kimodo joints "
                 f"{', '.join(ignored_joints)}; ignoring them."
             )
-        parsed_joints = _parse_expected_pose_joints(
-            raw_joints,
-            inferred_order,
-            constraint_type,
-            prim_index,
-            root_parent_name=root_parent_name,
-        )
-        ordered_rotations, root_position = _ordered_pose_values(
-            parsed_joints,
-            inferred_order,
-            world_offset,
-            constraint_type,
-            prim_index,
-        )
-        groups.setdefault(joint_group, []).append(
-            {
+        input_format = _infer_pose_input_format(raw_joints, inferred_order, constraint_type, prim_index)
+
+        if input_format == "world":
+            ordered_positions, ordered_rots = _ordered_world_pose_values(
+                raw_joints,
+                inferred_order,
+                world_offset,
+                constraint_type,
+                prim_index,
+            )
+            root_position = ordered_positions[0]
+            row = {
                 "frame": frame,
+                "input_format": "world",
+                "global_joints_positions": ordered_positions,
+                "smooth_root_2d": [root_position[0], root_position[2]],
+            }
+            if ordered_rots is not None:
+                row["global_joints_rots"] = ordered_rots
+        else:
+            raw_local_joints = _parse_pose_point_localtransforms(
+                raw_joints,
+                inferred_order,
+                constraint_type,
+                prim_index,
+                root_parent_name=root_parent_name,
+            )
+            parsed_joints = _parse_expected_pose_joints(
+                raw_local_joints,
+                inferred_order,
+                constraint_type,
+                prim_index,
+                root_parent_name=root_parent_name,
+            )
+            ordered_rotations, root_position = _ordered_legacy_pose_values(
+                parsed_joints,
+                inferred_order,
+                world_offset,
+                constraint_type,
+                prim_index,
+            )
+            row = {
+                "frame": frame,
+                "input_format": "legacy",
                 "local_joints_rot": ordered_rotations,
                 "root_position": root_position,
                 "smooth_root_2d": [root_position[0], root_position[2]],
             }
-        )
+        groups.setdefault(joint_group, []).append(row)
 
     constraints: list[dict[str, Any]] = []
     for joint_group, rows in groups.items():
         rows.sort(key=lambda row: row["frame"])
         _validate_unique_pose_frames(rows, constraint_type, joint_group)
+        input_formats = {row["input_format"] for row in rows}
+        if len(input_formats) > 1:
+            group = f" for joint_names={list(joint_group)!r}" if joint_group else ""
+            raise PoseConstraintParseError(
+                f"{constraint_type} constraint{group} mixes world-space and legacy pose frames."
+            )
+
         constraint: dict[str, Any] = {
             "type": constraint_type,
             "frame_indices": [row["frame"] for row in rows],
-            "local_joints_rot": [row["local_joints_rot"] for row in rows],
-            "root_positions": [row["root_position"] for row in rows],
             "smooth_root_2d": [row["smooth_root_2d"] for row in rows],
         }
+        if rows[0]["input_format"] == "world":
+            constraint["global_joints_positions"] = [row["global_joints_positions"] for row in rows]
+            has_rotation_targets = ["global_joints_rots" in row for row in rows]
+            if any(has_rotation_targets) and not all(has_rotation_targets):
+                group = f" for joint_names={list(joint_group)!r}" if joint_group else ""
+                raise PoseConstraintParseError(
+                    f"{constraint_type} constraint{group} mixes world-space frames with and without transform."
+                )
+            if all(has_rotation_targets):
+                constraint["global_joints_rots"] = [row["global_joints_rots"] for row in rows]
+        else:
+            constraint["local_joints_rot"] = [row["local_joints_rot"] for row in rows]
+            constraint["root_positions"] = [row["root_position"] for row in rows]
         if constraint_type == "end-effector":
             constraint["joint_names"] = list(joint_group)
         constraints.append(constraint)
@@ -147,8 +193,8 @@ def _canonical_joint_names(value: Any) -> tuple[str, ...]:
     return tuple(output)
 
 
-def _parse_pose_point_transforms(points: list, constraint_type: str, prim_index: int) -> dict[str, list[list[float]]]:
-    parsed: dict[str, list[list[float]]] = {}
+def _parse_pose_points(points: list, constraint_type: str, prim_index: int) -> dict[str, dict[str, Any]]:
+    parsed: dict[str, dict[str, Any]] = {}
     if not points:
         raise PoseConstraintParseError(f"{constraint_type} packed primitive {prim_index} contains an empty pose.")
 
@@ -163,12 +209,63 @@ def _parse_pose_point_transforms(points: list, constraint_type: str, prim_index:
                 f"{constraint_type} packed primitive {prim_index} has duplicate joint {joint_name!r}."
             )
 
+        parsed[joint_name] = {"point": point, "point_index": point_index}
+    return parsed
+
+
+def _parse_pose_point_localtransforms(
+    raw_joints: dict[str, dict[str, Any]],
+    skeleton_order: tuple[str, ...],
+    constraint_type: str,
+    prim_index: int,
+    *,
+    root_parent_name: str | None = None,
+) -> dict[str, list[list[float]]]:
+    localtransforms: dict[str, list[list[float]]] = {}
+    joint_names = list(skeleton_order)
+    if root_parent_name is not None:
+        joint_names.append(root_parent_name)
+
+    for joint_name in joint_names:
+        point_data = raw_joints[joint_name]
+        point_index = int(point_data["point_index"])
         localtransform = _matrix4_rows(
-            _pose_point_attrib(point, "localtransform", constraint_type, prim_index, point_index),
+            _pose_point_attrib(point_data["point"], "localtransform", constraint_type, prim_index, point_index),
             point_index=point_index,
         )
-        parsed[joint_name] = localtransform
-    return parsed
+        localtransforms[joint_name] = localtransform
+    return localtransforms
+
+
+def _infer_pose_input_format(
+    raw_joints: dict[str, dict[str, Any]],
+    skeleton_order: tuple[str, ...],
+    constraint_type: str,
+    prim_index: int,
+) -> str:
+    _validate_expected_pose_joint_names(raw_joints, skeleton_order, constraint_type, prim_index)
+    if all(_pose_point_has_attrib(raw_joints[name]["point"], "transform") for name in skeleton_order):
+        return "world"
+    if any(_pose_point_has_attrib(raw_joints[name]["point"], "localtransform") for name in skeleton_order):
+        return "legacy"
+    return "world"
+
+
+def _unexpected_extra_joints(joint_names: Any, skeleton_order: tuple[str, ...]) -> list[str]:
+    joint_set = set(joint_names)
+    expected = set(skeleton_order)
+    extra = joint_set - expected - set(_ROOT_PARENT_NAMES)
+    if not extra:
+        return []
+
+    tolerated_extra: set[str] = set()
+    if skeleton_order in _KNOWN_SKELETON_ORDERS:
+        for known_order in _KNOWN_SKELETON_ORDERS:
+            known_set = set(known_order)
+            if expected < known_set:
+                tolerated_extra.update(known_set - expected)
+
+    return sorted(extra - tolerated_extra)
 
 
 def _parse_expected_pose_joints(
@@ -205,6 +302,53 @@ def _parse_expected_pose_joints(
     return parsed
 
 
+def _ordered_world_pose_values(
+    raw_joints: dict[str, dict[str, Any]],
+    skeleton_order: tuple[str, ...],
+    output_world_offset: tuple[float, float, float],
+    constraint_type: str,
+    prim_index: int,
+) -> tuple[list[list[float]], list[list[list[float]]] | None]:
+    _validate_expected_pose_joint_names(raw_joints, skeleton_order, constraint_type, prim_index)
+    _validate_root_name(skeleton_order[0])
+
+    has_rotation_targets = all(_pose_point_has_attrib(raw_joints[name]["point"], "transform") for name in skeleton_order)
+    positions: list[list[float]] = []
+    rotations: list[list[list[float]]] | None = [] if has_rotation_targets else None
+    for joint_name in skeleton_order:
+        point_data = raw_joints[joint_name]
+        point = point_data["point"]
+        point_index = int(point_data["point_index"])
+        world_position = _pose_point_position(point, constraint_type, prim_index, point_index)
+        positions.append(
+            [
+                world_position[0] - output_world_offset[0],
+                world_position[1] - output_world_offset[1],
+                world_position[2] - output_world_offset[2],
+            ]
+        )
+
+        if rotations is not None:
+            rotation = _pose_point_matrix3(point, "transform", constraint_type, prim_index, point_index)
+            rotation = _rotation_without_scale(
+                rotation,
+                allow_scaled_rotation=True,
+                constraint_type=constraint_type,
+                prim_index=prim_index,
+                joint_name=joint_name,
+            )
+            _validate_rotation_matrix(
+                rotation,
+                constraint_type,
+                prim_index,
+                joint_name,
+                rotation_label="world rotation",
+            )
+            rotations.append(_transpose_matrix3(rotation))
+
+    return positions, rotations
+
+
 def _pose_point_attrib(point, name: str, constraint_type: str, prim_index: int, point_index: int) -> Any:
     try:
         return _point_attrib_value(point, name)
@@ -212,6 +356,56 @@ def _pose_point_attrib(point, name: str, constraint_type: str, prim_index: int, 
         raise PoseConstraintParseError(
             f"{constraint_type} packed primitive {prim_index} embedded pose point {point_index} "
             f"must have {name!r} attribute."
+        ) from exc
+
+
+def _pose_point_has_attrib(point, name: str) -> bool:
+    try:
+        _point_attrib_value(point, name)
+    except Exception:
+        return False
+    return True
+
+
+def _pose_point_position(
+    point,
+    constraint_type: str,
+    prim_index: int,
+    point_index: int,
+) -> tuple[float, float, float]:
+    position_method = getattr(point, "position", None)
+    if callable(position_method):
+        value = position_method()
+    else:
+        value = _pose_point_attrib(point, "P", constraint_type, prim_index, point_index)
+
+    try:
+        if len(value) == 3:
+            return (float(value[0]), float(value[1]), float(value[2]))
+    except Exception as exc:
+        raise PoseConstraintParseError(
+            f"{constraint_type} packed primitive {prim_index} embedded pose point {point_index} "
+            "position/P must be a 3D vector."
+        ) from exc
+    raise PoseConstraintParseError(
+        f"{constraint_type} packed primitive {prim_index} embedded pose point {point_index} "
+        "position/P must be a 3D vector."
+    )
+
+
+def _pose_point_matrix3(
+    point,
+    name: str,
+    constraint_type: str,
+    prim_index: int,
+    point_index: int,
+) -> list[list[float]]:
+    try:
+        return _matrix3_rows(_pose_point_attrib(point, name, constraint_type, prim_index, point_index))
+    except Exception as exc:
+        raise PoseConstraintParseError(
+            f"{constraint_type} packed primitive {prim_index} embedded pose point {point_index} "
+            f"{name!r} must be a 3x3 matrix or 9-number sequence."
         ) from exc
 
 
@@ -238,7 +432,7 @@ def _root_parent_name(raw_joints: dict[str, list[list[float]]]) -> str | None:
     return None
 
 
-def _ordered_pose_values(
+def _ordered_legacy_pose_values(
     parsed_joints: dict[str, tuple[list[float], list[float]]],
     skeleton_order: tuple[str, ...],
     output_world_offset: tuple[float, float, float],
@@ -258,17 +452,34 @@ def _ordered_pose_values(
             f"{constraint_type} packed primitive {prim_index} has unknown skeleton joint {unknown[0]!r}."
         )
 
-    root_name = skeleton_order[0]
-    if root_name not in _ROOT_NAMES:
-        raise PoseConstraintParseError(f"Skeleton root {root_name!r} is not recognized by the Houdini plugin.")
+    _validate_root_name(skeleton_order[0])
 
-    root_translation = parsed_joints[root_name][1]
+    root_translation = parsed_joints[skeleton_order[0]][1]
     root_position = [
         root_translation[0] - output_world_offset[0],
         root_translation[1] - output_world_offset[1],
         root_translation[2] - output_world_offset[2],
     ]
     return [parsed_joints[name][0] for name in skeleton_order], root_position
+
+
+def _validate_expected_pose_joint_names(
+    raw_joints: dict[str, Any],
+    skeleton_order: tuple[str, ...],
+    constraint_type: str,
+    prim_index: int,
+) -> None:
+    names = set(raw_joints)
+    missing = [name for name in skeleton_order if name not in names]
+    if missing:
+        raise PoseConstraintParseError(
+            f"{constraint_type} packed primitive {prim_index} is missing skeleton joint {missing[0]!r}."
+        )
+
+
+def _validate_root_name(root_name: str) -> None:
+    if root_name not in _ROOT_NAMES:
+        raise PoseConstraintParseError(f"Skeleton root {root_name!r} is not recognized by the Houdini plugin.")
 
 
 def _validate_unique_pose_frames(rows: list[dict[str, Any]], constraint_type: str, joint_group: tuple[str, ...]) -> None:

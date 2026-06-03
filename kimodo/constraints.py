@@ -35,6 +35,86 @@ def _convert_constraint_local_rots_to_skeleton(local_rot_mats: Tensor, skeleton:
     )
 
 
+def _validate_constraint_tensor_shape(tensor: Tensor, shape: tuple[int | None, ...], field_name: str) -> None:
+    if tensor.dim() != len(shape):
+        expected = ", ".join("?" if dim is None else str(dim) for dim in shape)
+        raise ValueError(f"{field_name} must have shape [{expected}], got {tuple(tensor.shape)}.")
+    for axis, expected_dim in enumerate(shape):
+        if expected_dim is not None and tensor.shape[axis] != expected_dim:
+            expected = ", ".join("?" if dim is None else str(dim) for dim in shape)
+            raise ValueError(f"{field_name} must have shape [{expected}], got {tuple(tensor.shape)}.")
+
+
+def _validate_constraint_tensor_count(tensor: Tensor, frame_indices: Tensor, field_name: str) -> None:
+    if len(tensor) != len(frame_indices):
+        raise ValueError(f"{field_name} must have the same length as frame_indices.")
+
+
+def _validate_constraint_joint_count(tensor: Tensor, skeleton: SkeletonBase, field_name: str) -> None:
+    n_joints = tensor.shape[1]
+    if n_joints != skeleton.nbjoints:
+        raise ValueError(
+            f"{field_name} joint count ({n_joints}) does not match skeleton joint count ({skeleton.nbjoints})."
+        )
+
+
+def _load_pose_constraint_tensors(
+    skeleton: SkeletonBase,
+    dico: dict,
+    ) -> tuple[Tensor, Tensor, Optional[Tensor], Optional[Tensor], str]:
+    frame_indices = torch.tensor(dico["frame_indices"])
+    device = skeleton.device if hasattr(skeleton, "device") else "cpu"
+    dtype = skeleton.neutral_joints.dtype if getattr(skeleton, "neutral_joints", None) is not None else torch.float32
+
+    has_legacy_fields = "root_positions" in dico or "local_joints_rot" in dico
+    has_world_fields = "global_joints_positions" in dico or "global_joints_rots" in dico
+    if has_legacy_fields and has_world_fields:
+        raise ValueError(
+            "Pose constraints must use either root_positions + local_joints_rot or "
+            "global_joints_positions, not both."
+        )
+    if has_world_fields:
+        if "global_joints_positions" not in dico:
+            raise ValueError("global_joints_rots requires global_joints_positions.")
+        global_joints_positions = torch.tensor(dico["global_joints_positions"], device=device, dtype=dtype)
+        _validate_constraint_tensor_shape(global_joints_positions, (None, None, 3), "global_joints_positions")
+        _validate_constraint_tensor_count(global_joints_positions, frame_indices, "global_joints_positions")
+        _validate_constraint_joint_count(global_joints_positions, skeleton, "global_joints_positions")
+
+        global_joints_rots = None
+        if "global_joints_rots" in dico:
+            global_joints_rots = torch.tensor(dico["global_joints_rots"], device=device, dtype=dtype)
+            _validate_constraint_tensor_shape(global_joints_rots, (None, None, 3, 3), "global_joints_rots")
+            _validate_constraint_tensor_count(global_joints_rots, frame_indices, "global_joints_rots")
+            _validate_constraint_joint_count(global_joints_rots, skeleton, "global_joints_rots")
+        input_format = "world"
+    else:
+        if "root_positions" not in dico or "local_joints_rot" not in dico:
+            raise ValueError("Pose constraints require root_positions + local_joints_rot or global_joints_positions.")
+        local_rot = torch.tensor(dico["local_joints_rot"], device=device, dtype=dtype)
+        _validate_constraint_tensor_shape(local_rot, (None, None, 3), "local_joints_rot")
+        _validate_constraint_tensor_count(local_rot, frame_indices, "local_joints_rot")
+        root_positions = torch.tensor(dico["root_positions"], device=device, dtype=dtype)
+        _validate_constraint_tensor_shape(root_positions, (None, 3), "root_positions")
+        _validate_constraint_tensor_count(root_positions, frame_indices, "root_positions")
+        local_rot_mats = axis_angle_to_matrix(local_rot)
+        local_rot_mats = _convert_constraint_local_rots_to_skeleton(local_rot_mats, skeleton)
+        global_joints_rots, global_joints_positions, _ = skeleton.fk(
+            local_rot_mats,
+            root_positions,
+        )
+        input_format = "legacy"
+
+    smooth_root_2d = None
+    if "smooth_root_2d" in dico:
+        smooth_root_2d = torch.tensor(dico["smooth_root_2d"], device=device, dtype=dtype)
+        if smooth_root_2d.shape[-1] not in (2, 3):
+            raise ValueError("smooth_root_2d must have shape [T, 2] or [T, 3].")
+        _validate_constraint_tensor_count(smooth_root_2d, frame_indices, "smooth_root_2d")
+
+    return frame_indices, global_joints_positions, global_joints_rots, smooth_root_2d, input_format
+
+
 def create_pairs(tensor_A: Tensor, tensor_B: Tensor) -> Tensor:
     """Form all (a, b) pairs from two 1D tensors; output shape (len(A)*len(B), 2)."""
     tensor_B = tensor_B.to(device=tensor_A.device, dtype=tensor_A.dtype)
@@ -190,9 +270,10 @@ class FullBodyConstraintSet:
         skeleton: SkeletonBase,
         frame_indices: Tensor,
         global_joints_positions: Tensor,
-        global_joints_rots: Tensor,
+        global_joints_rots: Optional[Tensor] = None,
         smooth_root_2d: Optional[Tensor] = None,
         to_crop: bool = False,
+        input_format: Optional[str] = None,
     ):
         self.skeleton = skeleton
         self.frame_indices = frame_indices
@@ -203,16 +284,18 @@ class FullBodyConstraintSet:
 
         if to_crop:
             global_joints_positions = global_joints_positions[frame_indices]
-            global_joints_rots = global_joints_rots[frame_indices]
+            if global_joints_rots is not None:
+                global_joints_rots = global_joints_rots[frame_indices]
             if smooth_root_2d is not None:
                 smooth_root_2d = smooth_root_2d[frame_indices]
         else:
             assert len(global_joints_positions) == len(
                 frame_indices
             ), "The number of global positions should be match the number of frames"
-            assert len(global_joints_rots) == len(
-                frame_indices
-            ), "The number of global joint rotations should be match the number of frames"
+            if global_joints_rots is not None:
+                assert len(global_joints_rots) == len(
+                    frame_indices
+                ), "The number of global joint rotations should be match the number of frames"
 
             if smooth_root_2d is not None:
                 assert len(smooth_root_2d) == len(
@@ -228,6 +311,8 @@ class FullBodyConstraintSet:
 
         self.global_joints_positions = global_joints_positions
         self.global_joints_rots = global_joints_rots
+        self.has_rotation_targets = global_joints_rots is not None
+        self.input_format = input_format or ("legacy" if self.has_rotation_targets else "world")
         self.global_root_heading = compute_global_heading(global_joints_positions, skeleton)
         self.smooth_root_2d = smooth_root_2d
 
@@ -266,12 +351,24 @@ class FullBodyConstraintSet:
             self.skeleton,
             self.frame_indices[mask] - start,
             self.global_joints_positions[mask],
-            self.global_joints_rots[mask],
+            self.global_joints_rots[mask] if self.global_joints_rots is not None else None,
             self.smooth_root_2d[mask],
+            input_format=self.input_format,
         )
 
     def get_save_info(self) -> dict:
-        """Return a dict for JSON save: type, frame_indices, local_joints_rot, root_positions, smooth_root_2d."""
+        """Return a dict for JSON save."""
+        if self.input_format == "world" or self.global_joints_rots is None:
+            output = {
+                "type": self.name,
+                "frame_indices": self.frame_indices,
+                "global_joints_positions": self.global_joints_positions,
+                "smooth_root_2d": self.smooth_root_2d,
+            }
+            if self.global_joints_rots is not None:
+                output["global_joints_rots"] = self.global_joints_rots
+            return output
+
         local_joints_rot = self.skeleton.global_rots_to_local_rots(self.global_joints_rots)
         if isinstance(self.skeleton, SOMASkeleton30):
             local_joints_rot = self.skeleton.to_SOMASkeleton77(local_joints_rot)
@@ -293,7 +390,8 @@ class FullBodyConstraintSet:
     ) -> "FullBodyConstraintSet":
         self.frame_indices = _tensor_to(self.frame_indices, device, dtype)
         self.global_joints_positions = _tensor_to(self.global_joints_positions, device, dtype)
-        self.global_joints_rots = _tensor_to(self.global_joints_rots, device, dtype)
+        if self.global_joints_rots is not None:
+            self.global_joints_rots = _tensor_to(self.global_joints_rots, device, dtype)
         self.root_y_pos = _tensor_to(self.root_y_pos, device, dtype)
         self.global_root_heading = _tensor_to(self.global_root_heading, device, dtype)
         self.smooth_root_2d = _tensor_to(self.smooth_root_2d, device, dtype)
@@ -304,18 +402,9 @@ class FullBodyConstraintSet:
     @classmethod
     def from_dict(cls, skeleton: SkeletonBase, dico: dict) -> "FullBodyConstraintSet":
         """Build a FullBodyConstraintSet from a dict (e.g. loaded from JSON)."""
-        frame_indices = torch.tensor(dico["frame_indices"])
-        device = skeleton.device if hasattr(skeleton, "device") else "cpu"
-        local_rot = torch.tensor(dico["local_joints_rot"], device=device)
-        local_rot_mats = axis_angle_to_matrix(local_rot)
-        local_rot_mats = _convert_constraint_local_rots_to_skeleton(local_rot_mats, skeleton)
-        global_joints_rots, global_joints_positions, _ = skeleton.fk(
-            local_rot_mats,
-            torch.tensor(dico["root_positions"], device=device),
+        frame_indices, global_joints_positions, global_joints_rots, smooth_root_2d, input_format = (
+            _load_pose_constraint_tensors(skeleton, dico)
         )
-        smooth_root_2d = None
-        if "smooth_root_2d" in dico:
-            smooth_root_2d = torch.tensor(dico["smooth_root_2d"], device=device)
 
         return cls(
             skeleton,
@@ -323,6 +412,7 @@ class FullBodyConstraintSet:
             global_joints_positions=global_joints_positions,
             global_joints_rots=global_joints_rots,
             smooth_root_2d=smooth_root_2d,
+            input_format=input_format,
         )
 
 
@@ -336,11 +426,12 @@ class EndEffectorConstraintSet:
         skeleton: SkeletonBase,
         frame_indices: Tensor,
         global_joints_positions: Tensor,
-        global_joints_rots: Tensor,
-        smooth_root_2d: Optional[Tensor],
+        global_joints_rots: Optional[Tensor] = None,
+        smooth_root_2d: Optional[Tensor] = None,
         *,
         joint_names: list[str],
         to_crop: bool = False,
+        input_format: Optional[str] = None,
     ) -> None:
         self.skeleton = skeleton
         self.frame_indices = frame_indices
@@ -366,16 +457,18 @@ class EndEffectorConstraintSet:
 
         if to_crop:
             global_joints_positions = global_joints_positions[frame_indices]
-            global_joints_rots = global_joints_rots[frame_indices]
+            if global_joints_rots is not None:
+                global_joints_rots = global_joints_rots[frame_indices]
             if smooth_root_2d is not None:
                 smooth_root_2d = smooth_root_2d[frame_indices]
         else:
             assert len(global_joints_positions) == len(
                 frame_indices
             ), "The number of global positions should be match the number of frames"
-            assert len(global_joints_rots) == len(
-                frame_indices
-            ), "The number of global joint rotations should be match the number of frames"
+            if global_joints_rots is not None:
+                assert len(global_joints_rots) == len(
+                    frame_indices
+                ), "The number of global joint rotations should be match the number of frames"
             if smooth_root_2d is not None:
                 assert len(smooth_root_2d) == len(
                     frame_indices
@@ -391,6 +484,8 @@ class EndEffectorConstraintSet:
         self.global_joints_positions = global_joints_positions
         self.global_root_heading = compute_global_heading(global_joints_positions, skeleton)
         self.global_joints_rots = global_joints_rots
+        self.has_rotation_targets = global_joints_rots is not None
+        self.input_format = input_format or ("legacy" if self.has_rotation_targets else "world")
         self.smooth_root_2d = smooth_root_2d
 
     def update_constraints(self, data_dict: dict, index_dict: dict) -> None:
@@ -410,17 +505,18 @@ class EndEffectorConstraintSet:
         data_dict["global_joints_positions"].append(self.global_joints_positions[tuple(pos_indices_crop.T)])
         index_dict["global_joints_positions"].append(pos_indices_real)
 
-        # constraint rotations
-        rot_indices_real = create_pairs(
-            self.frame_indices,
-            self.rot_indices,
-        )
-        rot_indices_crop = create_pairs(
-            crop_frames_indexing,
-            self.rot_indices,
-        )
-        data_dict["global_joints_rots"].append(self.global_joints_rots[tuple(rot_indices_crop.T)])
-        index_dict["global_joints_rots"].append(rot_indices_real)
+        if self.global_joints_rots is not None:
+            # constraint rotations only when the input provided real rotation targets
+            rot_indices_real = create_pairs(
+                self.frame_indices,
+                self.rot_indices,
+            )
+            rot_indices_crop = create_pairs(
+                crop_frames_indexing,
+                self.rot_indices,
+            )
+            data_dict["global_joints_rots"].append(self.global_joints_rots[tuple(rot_indices_crop.T)])
+            index_dict["global_joints_rots"].append(rot_indices_real)
 
         # as we use smooth root, also constraint the smooth root to get the same full body
         # maybe keep storing the hips offset, if we smooth it ourselves
@@ -448,13 +544,27 @@ class EndEffectorConstraintSet:
             self.skeleton,
             self.frame_indices[mask] - start,
             self.global_joints_positions[mask],
-            self.global_joints_rots[mask],
+            self.global_joints_rots[mask] if self.global_joints_rots is not None else None,
             self.smooth_root_2d[mask],
+            input_format=self.input_format,
             **kwargs,
         )
 
     def get_save_info(self) -> dict:
-        """Return a dict for JSON save: type, frame_indices, local_joints_rot, root_positions, smooth_root_2d, joint_names."""
+        """Return a dict for JSON save."""
+        if self.input_format == "world" or self.global_joints_rots is None:
+            output = {
+                "type": self.name,
+                "frame_indices": self.frame_indices,
+                "global_joints_positions": self.global_joints_positions,
+                "smooth_root_2d": self.smooth_root_2d,
+            }
+            if self.global_joints_rots is not None:
+                output["global_joints_rots"] = self.global_joints_rots
+            if not hasattr(self.__class__, "joint_names"):
+                output["joint_names"] = self.joint_names
+            return output
+
         local_joints_rot = self.skeleton.global_rots_to_local_rots(self.global_joints_rots)
         if isinstance(self.skeleton, SOMASkeleton30):
             local_joints_rot = self.skeleton.to_SOMASkeleton77(local_joints_rot)
@@ -485,7 +595,8 @@ class EndEffectorConstraintSet:
         self.root_y_pos = _tensor_to(self.root_y_pos, device, dtype)
         self.global_joints_positions = _tensor_to(self.global_joints_positions, device, dtype)
         self.global_root_heading = _tensor_to(self.global_root_heading, device, dtype)
-        self.global_joints_rots = _tensor_to(self.global_joints_rots, device, dtype)
+        if self.global_joints_rots is not None:
+            self.global_joints_rots = _tensor_to(self.global_joints_rots, device, dtype)
         self.smooth_root_2d = _tensor_to(self.smooth_root_2d, device, dtype)
         if device is not None and hasattr(self.skeleton, "to"):
             self.skeleton = self.skeleton.to(device)
@@ -494,18 +605,9 @@ class EndEffectorConstraintSet:
     @classmethod
     def from_dict(cls, skeleton: SkeletonBase, dico: dict) -> "EndEffectorConstraintSet":
         """Build an EndEffectorConstraintSet from a dict (e.g. loaded from JSON)."""
-        frame_indices = torch.tensor(dico["frame_indices"])
-        device = skeleton.device if hasattr(skeleton, "device") else "cpu"
-        local_rot = torch.tensor(dico["local_joints_rot"], device=device)
-        local_rot_mats = axis_angle_to_matrix(local_rot)
-        local_rot_mats = _convert_constraint_local_rots_to_skeleton(local_rot_mats, skeleton)
-        global_joints_rots, global_joints_positions, _ = skeleton.fk(
-            local_rot_mats,
-            torch.tensor(dico["root_positions"], device=device),
+        frame_indices, global_joints_positions, global_joints_rots, smooth_root_2d, input_format = (
+            _load_pose_constraint_tensors(skeleton, dico)
         )
-        smooth_root_2d = None
-        if "smooth_root_2d" in dico:
-            smooth_root_2d = torch.tensor(dico["smooth_root_2d"], device=device)
 
         kwargs = {}
         if not hasattr(cls, "joint_names"):
@@ -517,6 +619,7 @@ class EndEffectorConstraintSet:
             global_joints_positions=global_joints_positions,
             global_joints_rots=global_joints_rots,
             smooth_root_2d=smooth_root_2d,
+            input_format=input_format,
             **kwargs,
         )
 

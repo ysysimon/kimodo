@@ -88,11 +88,13 @@ def extract_input_motion_from_constraints(
             global_rots = constraint.global_joints_rots  # (K, J, 3, 3) where K = len(frame_indices)
             global_positions = constraint.global_joints_positions  # (K, J, 3)
             if isinstance(frame_indices, torch.Tensor):
-                global_rots = global_rots[valid_mask]
+                if global_rots is not None:
+                    global_rots = global_rots[valid_mask]
                 global_positions = global_positions[valid_mask]
                 smooth_root_2d = constraint.smooth_root_2d[valid_mask]
             else:
-                global_rots = global_rots[valid_positions]
+                if global_rots is not None:
+                    global_rots = global_rots[valid_positions]
                 global_positions = global_positions[valid_positions]
                 smooth_root_2d = constraint.smooth_root_2d[valid_positions]
 
@@ -103,11 +105,12 @@ def extract_input_motion_from_constraints(
                 root_positions[:, 0] = smooth_root_2d[:, 0]  # x
                 root_positions[:, 2] = smooth_root_2d[:, 1]  # z
 
-            local_rot_mats = skeleton.global_rots_to_local_rots(global_rots)  # (K, J, 3, 3)
-            local_rot_quats = matrix_to_quaternion(local_rot_mats)  # (K, J, 4)
+            if global_rots is not None and getattr(constraint, "has_rotation_targets", True):
+                local_rot_mats = skeleton.global_rots_to_local_rots(global_rots)  # (K, J, 3, 3)
+                local_rot_quats = matrix_to_quaternion(local_rot_mats)  # (K, J, 4)
+                rotations_input[frame_indices] = _match_rot_dtype(local_rot_quats)
 
             hip_translations_input[frame_indices] = _match_hip_dtype(root_positions)
-            rotations_input[frame_indices] = _match_rot_dtype(local_rot_quats)
         else:
             NotImplementedError(f"Constraint {constraint.name} is not supported")
 
@@ -238,15 +241,32 @@ def post_process_motion(
                 if not frame_indices:
                     continue
             if constraint.name == "fullbody":
-                out["FullBody"][frame_indices] = 1.0
+                if getattr(constraint, "has_rotation_targets", True):
+                    out["FullBody"][frame_indices] = 1.0
+                else:
+                    out["Root"][frame_indices] = 1.0
             elif constraint.name == "left-foot":
-                out["LeftFoot"][frame_indices] = 1.0
+                if getattr(constraint, "has_rotation_targets", True):
+                    out["LeftFoot"][frame_indices] = 1.0
+                else:
+                    out["Root"][frame_indices] = 1.0
             elif constraint.name == "right-foot":
-                out["RightFoot"][frame_indices] = 1.0
+                if getattr(constraint, "has_rotation_targets", True):
+                    out["RightFoot"][frame_indices] = 1.0
+                else:
+                    out["Root"][frame_indices] = 1.0
             elif constraint.name == "left-hand":
-                out["LeftHand"][frame_indices] = 1.0
+                if getattr(constraint, "has_rotation_targets", True):
+                    out["LeftHand"][frame_indices] = 1.0
+                else:
+                    out["Root"][frame_indices] = 1.0
             elif constraint.name == "right-hand":
-                out["RightHand"][frame_indices] = 1.0
+                if getattr(constraint, "has_rotation_targets", True):
+                    out["RightHand"][frame_indices] = 1.0
+                else:
+                    out["Root"][frame_indices] = 1.0
+            elif constraint.name == "end-effector" and not getattr(constraint, "has_rotation_targets", True):
+                out["Root"][frame_indices] = 1.0
             elif constraint.name == "root2d":
                 out["Root"][frame_indices] = 1.0
         return out
@@ -279,7 +299,6 @@ def post_process_motion(
     has_double_ankle_joints = isinstance(skeleton, G1Skeleton34)
 
     # Prepare input tensors. The generated motion will be modified in place. Clone first.
-    neutral_joints_pelvis_offset = skeleton.neutral_joints[0].cpu().clone()
     hip_translations_corrected = root_positions.cpu().clone()
     rotations_corrected = matrix_to_quaternion(local_rot_mats).cpu().clone()  # (B, T, J, 4)
     contacts = contacts.cpu()

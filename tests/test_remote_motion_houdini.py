@@ -206,7 +206,44 @@ def test_root2d_constraint_parser_rejects_bad_frames(monkeypatch):
         raise AssertionError("Expected missing frame to raise Root2DConstraintParseError")
 
 
-def test_pose_constraint_parser_reads_packed_point_frame_and_row_major_localtransform(monkeypatch):
+def test_pose_constraint_parser_defaults_to_world_space_p_and_row_major_transform(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    skeleton_order = ("Hips", "Chest")
+    pose_geo = FakeGeometry(
+        [
+            FakePoint((13.0, 4.0, 9.0), {"origin_name": "Chest", "transform": _identity3()}),
+            FakePoint((12.0, 3.0, 8.0), {"origin_name": "Hips", "transform": _z90_3()}),
+        ],
+        point_attribs={"origin_name", "transform"},
+    )
+    geo = FakeGeometry(
+        prims=[FakePackedPrimitive(FakePoint((0.0, 0.0, 0.0), {"frame": 20}), pose_geo)]
+    )
+
+    parsed, warnings = constraints.pose_constraints_from_geometry(
+        geo,
+        "fullbody",
+        frame_origin=1,
+        output_world_offset=(10.0, 1.0, 3.0),
+        skeleton_order=skeleton_order,
+    )
+
+    assert warnings == []
+    assert parsed[0]["type"] == "fullbody"
+    assert parsed[0]["frame_indices"] == [19]
+    assert parsed[0]["global_joints_positions"] == [[[2.0, 2.0, 5.0], [3.0, 3.0, 6.0]]]
+    assert parsed[0]["smooth_root_2d"] == [[2.0, 5.0]]
+    assert "root_positions" not in parsed[0]
+    assert "local_joints_rot" not in parsed[0]
+    expected_backend_matrix = [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+    assert _matrix_close(parsed[0]["global_joints_rots"][0][0], expected_backend_matrix)
+    assert _matrix_close(parsed[0]["global_joints_rots"][0][1], _identity3_matrix())
+
+
+def test_pose_constraint_parser_falls_back_to_legacy_localtransform_without_world_transform(monkeypatch):
     plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
     monkeypatch.syspath_prepend(str(plugin_libs))
     constraints = importlib.import_module("remote_motion_houdini.constraints")
@@ -248,6 +285,81 @@ def test_pose_constraint_parser_reads_packed_point_frame_and_row_major_localtran
     assert parsed[0]["local_joints_rot"][0][1] == [0.0, 0.0, 0.0]
 
 
+def test_pose_constraint_parser_accepts_scaled_world_transform(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    skeleton_order = ("Hips", "Chest")
+    pose_geo = FakeGeometry(
+        [
+            FakePoint((0.0, 1.0, 0.0), {"origin_name": "Hips", "transform": _scale3(0.01)}),
+            FakePoint((0.0, 2.0, 0.0), {"origin_name": "Chest", "transform": _scale3(0.01)}),
+        ],
+        point_attribs={"origin_name", "transform"},
+    )
+    geo = FakeGeometry(
+        prims=[FakePackedPrimitive(FakePoint((0.0, 0.0, 0.0), {"frame": 1}), pose_geo)]
+    )
+
+    parsed, warnings = constraints.pose_constraints_from_geometry(
+        geo,
+        "fullbody",
+        skeleton_order=skeleton_order,
+    )
+
+    assert warnings == []
+    assert parsed[0]["global_joints_positions"] == [[[0.0, 1.0, 0.0], [0.0, 2.0, 0.0]]]
+    assert parsed[0]["global_joints_rots"] == [[_identity3_matrix(), _identity3_matrix()]]
+
+
+def test_pose_constraint_parser_ignores_expected_soma77_extras_for_soma30_target(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    geo = FakeGeometry(
+        prims=[_packed_world_pose_primitive(constraints._SOMA77_ORDER, 1, (0.0, 1.0, 0.0))]
+    )
+
+    parsed, warnings = constraints.pose_constraints_from_geometry(
+        geo,
+        "fullbody",
+        skeleton_order=constraints._SOMA30_ORDER,
+    )
+
+    assert warnings == []
+    assert len(parsed[0]["global_joints_positions"][0]) == len(constraints._SOMA30_ORDER)
+
+
+def test_pose_constraint_parser_warns_only_for_truly_unknown_extra_joints(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    constraints = importlib.import_module("remote_motion_houdini.constraints")
+
+    geo = FakeGeometry(
+        prims=[
+            _packed_world_pose_primitive(
+                constraints._SOMA77_ORDER + ("UnexpectedJoint",),
+                1,
+                (0.0, 1.0, 0.0),
+            )
+        ]
+    )
+
+    parsed, warnings = constraints.pose_constraints_from_geometry(
+        geo,
+        "fullbody",
+        skeleton_order=constraints._SOMA30_ORDER,
+    )
+
+    assert len(parsed[0]["global_joints_positions"][0]) == len(constraints._SOMA30_ORDER)
+    assert len(warnings) == 1
+    assert "UnexpectedJoint" in warnings[0]
+    assert "HeadEnd" not in warnings[0]
+    assert "LeftHandThumb1" not in warnings[0]
+
+
 def test_pose_constraint_parser_groups_end_effectors_by_joint_names(monkeypatch):
     plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
     monkeypatch.syspath_prepend(str(plugin_libs))
@@ -256,14 +368,14 @@ def test_pose_constraint_parser_groups_end_effectors_by_joint_names(monkeypatch)
     skeleton_order = ("Hips", "Chest")
     geo = FakeGeometry(
         prims=[
-            _packed_pose_primitive(skeleton_order, 1, (0.0, 1.0, 0.0), joint_names=["RightFoot"]),
-            _packed_pose_primitive(
+            _packed_world_pose_primitive(skeleton_order, 1, (0.0, 1.0, 0.0), joint_names=["RightFoot"]),
+            _packed_world_pose_primitive(
                 skeleton_order,
                 2,
                 (1.0, 1.0, 0.0),
                 joint_names=["LeftHand", "RightFoot"],
             ),
-            _packed_pose_primitive(
+            _packed_world_pose_primitive(
                 skeleton_order,
                 3,
                 (2.0, 1.0, 0.0),
@@ -285,7 +397,8 @@ def test_pose_constraint_parser_groups_end_effectors_by_joint_names(monkeypatch)
     assert parsed[0]["frame_indices"] == [0]
     assert parsed[1]["joint_names"] == ["RightFoot", "LeftHand"]
     assert parsed[1]["frame_indices"] == [1, 2]
-    assert parsed[1]["root_positions"] == [[1.0, 1.0, 0.0], [2.0, 1.0, 0.0]]
+    assert [pose[0] for pose in parsed[1]["global_joints_positions"]] == [[1.0, 1.0, 0.0], [2.0, 1.0, 0.0]]
+    assert "root_positions" not in parsed[1]
 
 
 def test_pose_constraint_parser_applies_extra_root_parent_transform(monkeypatch):
@@ -542,20 +655,21 @@ def test_generate_motion_can_include_root2d_constraints(monkeypatch, tmp_path):
         point_attribs={"frame", "transform"},
     )
     source = FakeSopNode(geo)
+    soma77_order = constraints_module._SOMA77_ORDER
     soma30_order = constraints_module._SOMA30_ORDER
     fullbody_source = FakeSopNode(
-        FakeGeometry(prims=[_packed_pose_primitive(soma30_order, 2, (10.0, 1.0, 4.0))])
+        FakeGeometry(prims=[_packed_world_pose_primitive(soma77_order, 2, (10.0, 1.0, 4.0))])
     )
     end_effector_source = FakeSopNode(
         FakeGeometry(
             prims=[
-                _packed_pose_primitive(soma30_order, 3, (11.0, 1.0, 4.0), joint_names=["RightFoot"]),
-                _packed_pose_primitive(soma30_order, 4, (12.0, 1.0, 4.0), joint_names=["LeftHand"]),
+                _packed_world_pose_primitive(soma77_order, 3, (11.0, 1.0, 4.0), joint_names=["RightFoot"]),
+                _packed_world_pose_primitive(soma77_order, 4, (12.0, 1.0, 4.0), joint_names=["LeftHand"]),
             ]
         )
     )
     left_hand_source = FakeSopNode(
-        FakeGeometry(prims=[_packed_pose_primitive(soma30_order, 5, (13.0, 1.0, 4.0))])
+        FakeGeometry(prims=[_packed_world_pose_primitive(soma77_order, 5, (13.0, 1.0, 4.0))])
     )
 
     monkeypatch.setattr(callbacks, "RemoteMotionClient", FakeClient)
@@ -588,7 +702,8 @@ def test_generate_motion_can_include_root2d_constraints(monkeypatch, tmp_path):
 
     callbacks.generate_motion({"node": node})
 
-    zero_rots = [[0.0, 0.0, 0.0] for _name in soma30_order]
+    identity_rots = [_identity3_matrix() for _name in soma30_order]
+    world_offset = (10.0, 0.0, 3.0)
     assert calls["payload"]["output_world_offset"] == [10.0, 0.0, 3.0]
     assert calls["payload"]["constraints"] == [
         {
@@ -600,32 +715,113 @@ def test_generate_motion_can_include_root2d_constraints(monkeypatch, tmp_path):
         {
             "type": "fullbody",
             "frame_indices": [1],
-            "local_joints_rot": [zero_rots],
-            "root_positions": [[0.0, 1.0, 1.0]],
             "smooth_root_2d": [[0.0, 1.0]],
+            "global_joints_positions": [
+                _expected_world_pose_positions(soma77_order, soma30_order, (10.0, 1.0, 4.0), world_offset)
+            ],
+            "global_joints_rots": [identity_rots],
         },
         {
             "type": "end-effector",
             "frame_indices": [2],
-            "local_joints_rot": [zero_rots],
-            "root_positions": [[1.0, 1.0, 1.0]],
             "smooth_root_2d": [[1.0, 1.0]],
+            "global_joints_positions": [
+                _expected_world_pose_positions(soma77_order, soma30_order, (11.0, 1.0, 4.0), world_offset)
+            ],
+            "global_joints_rots": [identity_rots],
             "joint_names": ["RightFoot"],
         },
         {
             "type": "end-effector",
             "frame_indices": [3],
-            "local_joints_rot": [zero_rots],
-            "root_positions": [[2.0, 1.0, 1.0]],
             "smooth_root_2d": [[2.0, 1.0]],
+            "global_joints_positions": [
+                _expected_world_pose_positions(soma77_order, soma30_order, (12.0, 1.0, 4.0), world_offset)
+            ],
+            "global_joints_rots": [identity_rots],
             "joint_names": ["LeftHand"],
         },
         {
             "type": "left-hand",
             "frame_indices": [4],
-            "local_joints_rot": [zero_rots],
-            "root_positions": [[3.0, 1.0, 1.0]],
             "smooth_root_2d": [[3.0, 1.0]],
+            "global_joints_positions": [
+                _expected_world_pose_positions(soma77_order, soma30_order, (13.0, 1.0, 4.0), world_offset)
+            ],
+            "global_joints_rots": [identity_rots],
+        },
+    ]
+
+
+def test_generate_motion_falls_back_to_legacy_pose_constraints_without_world_transform(monkeypatch, tmp_path):
+    from remote_motion_client.models import ArtifactInfo, JobInfo
+
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    callbacks = importlib.import_module("remote_motion_houdini.hda_callbacks")
+    constraints_module = importlib.import_module("remote_motion_houdini.constraints")
+
+    calls: dict[str, Any] = {}
+
+    class FakeClient:
+        def __init__(self, server_url: str) -> None:
+            pass
+
+        def submit(self, payload: dict[str, Any]) -> JobInfo:
+            calls["payload"] = payload
+            return JobInfo(job_id="job-1", status="queued")
+
+        def wait(self, job_id: str, poll_interval: float, timeout: float | None) -> JobInfo:
+            return JobInfo(
+                job_id="job-1",
+                status="succeeded",
+                artifacts={
+                    "bvh": ArtifactInfo(
+                        key="bvh",
+                        filename="motion.bvh",
+                        content_type="application/octet-stream",
+                        size_bytes=8,
+                        download_url="/jobs/job-1/artifacts/bvh",
+                    )
+                },
+            )
+
+        def download_artifact(self, job: JobInfo, artifact_key: str, dst_dir_or_path: Path) -> Path:
+            return Path(dst_dir_or_path) / "motion.bvh"
+
+    soma30_order = constraints_module._SOMA30_ORDER
+    fullbody_source = FakeSopNode(
+        FakeGeometry(prims=[_packed_pose_primitive(soma30_order, 2, (10.0, 1.0, 4.0))])
+    )
+
+    monkeypatch.setattr(callbacks, "RemoteMotionClient", FakeClient)
+    monkeypatch.setattr(callbacks, "default_download_dir", lambda job_id: tmp_path / job_id)
+    monkeypatch.setattr(callbacks, "refresh_mocap_import", lambda node, artifact_path: True)
+
+    node = FakeNode(
+        {
+            "server_url": "http://127.0.0.1:8000",
+            "prompt": "walk forward",
+            "duration": 2.5,
+            "poll_interval": 0.25,
+            "wait_timeout": "",
+            "enable_constraints": True,
+            "frame_origin": 1,
+            "output_world_offset": (10.0, 0.0, 3.0),
+        },
+        children={"OUT_FULLBODY_CONSTRAINTS": fullbody_source},
+    )
+
+    callbacks.generate_motion({"node": node})
+
+    zero_rots = [[0.0, 0.0, 0.0] for _name in soma30_order]
+    assert calls["payload"]["constraints"] == [
+        {
+            "type": "fullbody",
+            "frame_indices": [1],
+            "smooth_root_2d": [[0.0, 1.0]],
+            "local_joints_rot": [zero_rots],
+            "root_positions": [[0.0, 1.0, 1.0]],
         },
     ]
 
@@ -1257,6 +1453,18 @@ def _identity3() -> tuple[float, ...]:
     return (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
 
 
+def _identity3_matrix() -> list[list[float]]:
+    return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def _z90_3() -> tuple[float, ...]:
+    return (0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def _scale3(scale: float) -> tuple[float, ...]:
+    return (scale, 0.0, 0.0, 0.0, scale, 0.0, 0.0, 0.0, scale)
+
+
 def _identity4(tx: float = 0.0, ty: float = 0.0, tz: float = 0.0) -> tuple[float, ...]:
     return (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, tx, ty, tz, 1.0)
 
@@ -1291,6 +1499,62 @@ def _matrix_close(left: list[list[float]], right: list[list[float]], *, toleranc
         abs(left[row][col] - right[row][col]) <= tolerance
         for row in range(len(left))
         for col in range(len(left[row]))
+    )
+
+
+def _world_pose_joint_position(root_position: tuple[float, float, float], joint_index: int) -> tuple[float, float, float]:
+    offset = float(joint_index)
+    return (root_position[0] + offset, root_position[1] + offset, root_position[2] + offset)
+
+
+def _expected_world_pose_positions(
+    source_order: tuple[str, ...],
+    target_order: tuple[str, ...],
+    root_position: tuple[float, float, float],
+    output_world_offset: tuple[float, float, float],
+) -> list[list[float]]:
+    source_indices = {joint_name: index for index, joint_name in enumerate(source_order)}
+    positions = []
+    for joint_name in target_order:
+        index = source_indices[joint_name]
+        world_position = _world_pose_joint_position(root_position, index)
+        positions.append(
+            [
+                world_position[0] - output_world_offset[0],
+                world_position[1] - output_world_offset[1],
+                world_position[2] - output_world_offset[2],
+            ]
+        )
+    return positions
+
+
+def _packed_world_pose_primitive(
+    skeleton_order: tuple[str, ...],
+    frame: int,
+    root_position: tuple[float, float, float],
+    *,
+    joint_names: list[str] | None = None,
+    transform: tuple[float, ...] | None = None,
+) -> FakePackedPrimitive:
+    pose_points = []
+    point_transform = transform or _identity3()
+    for index, joint_name in enumerate(skeleton_order):
+        pose_points.append(
+            FakePoint(
+                _world_pose_joint_position(root_position, index),
+                {
+                    "origin_name": joint_name,
+                    "transform": point_transform,
+                },
+            )
+        )
+
+    packed_attribs: dict[str, Any] = {"frame": frame}
+    if joint_names is not None:
+        packed_attribs["joint_names"] = joint_names
+    return FakePackedPrimitive(
+        FakePoint((0.0, 0.0, 0.0), packed_attribs),
+        FakeGeometry(pose_points, point_attribs={"origin_name", "transform"}),
     )
 
 

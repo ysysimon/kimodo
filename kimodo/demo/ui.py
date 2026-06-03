@@ -1119,6 +1119,15 @@ def create_gui(
                     else:
                         raise KeyError(f"Unsupported constraint type in loader: {constraint_type}")
 
+                    constraint_rots = getattr(constraint_obj, "global_joints_rots", None)
+                    if constraint_type != "root2d" and constraint_rots is None:
+                        positions = constraint_obj.global_joints_positions
+                        constraint_rots = torch.eye(
+                            3,
+                            device=positions.device,
+                            dtype=positions.dtype,
+                        ).expand(positions.shape[0], positions.shape[1], 3, 3)
+
                     for target in load_targets:
                         track_id = session.timeline_data["tracks_ids"][target["track_name"]]
                         constraint_track = target["constraint_track"]
@@ -1148,7 +1157,7 @@ def create_gui(
                                     start_idx,
                                     end_idx,
                                     constraint_obj.global_joints_positions[start_idx_t : end_idx_t + 1],
-                                    constraint_obj.global_joints_rots[start_idx_t : end_idx_t + 1],
+                                    constraint_rots[start_idx_t : end_idx_t + 1],
                                 )
                             else:
                                 constraint_track.add_interval(
@@ -1156,7 +1165,7 @@ def create_gui(
                                     start_idx,
                                     end_idx,
                                     constraint_obj.global_joints_positions[start_idx_t : end_idx_t + 1],
-                                    constraint_obj.global_joints_rots[start_idx_t : end_idx_t + 1],
+                                    constraint_rots[start_idx_t : end_idx_t + 1],
                                     target["joint_names"],
                                     target["end_effector_type"],
                                 )
@@ -1183,14 +1192,14 @@ def create_gui(
                                     keyframe_id,
                                     frame,
                                     constraint_obj.global_joints_positions[frame_t],
-                                    constraint_obj.global_joints_rots[frame_t],
+                                    constraint_rots[frame_t],
                                 )
                             else:
                                 constraint_track.add_keyframe(
                                     keyframe_id,
                                     frame,
                                     constraint_obj.global_joints_positions[frame_t],
-                                    constraint_obj.global_joints_rots[frame_t],
+                                    constraint_rots[frame_t],
                                     target["joint_names"],
                                     target["end_effector_type"],
                                 )

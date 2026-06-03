@@ -223,10 +223,21 @@ list item is one constraint set object and must include at least `type` and
 ```
 
 The `"... repeat until J joints ..."` / `"... J joints ..."` strings in the
-examples are placeholders for explaining shapes, not valid values to submit. In
-a real request, `local_joints_rot` must be a pure numeric nested array with
-shape `[T, J, 3]`, where `J` must match the target model skeleton joint count,
-for example `30` for SOMA30, `77` for SOMA77, and `34` for G1.
+examples are placeholders for explaining shapes, not valid values to submit.
+All pose arrays must be pure numeric nested arrays.
+
+Pose-based constraints support exactly one of these input forms:
+
+- Legacy FK input: `root_positions: [T, 3]` plus `local_joints_rot: [T, J, 3]`
+  axis-angle radians. Kimodo runs FK to derive world-space joint targets.
+- World-space input: `global_joints_positions: [T, J, 3]`, with optional
+  `global_joints_rots: [T, J, 3, 3]`. Kimodo uses the supplied world-space
+  positions directly and does not run FK for that constraint.
+
+In either form, `J` must match the target model skeleton joint count, for
+example `30` for SOMA30, `77` for SOMA77, and `34` for G1. World-space
+positions currently require an exact joint-count match; SOMA30/SOMA77
+conversion is only supported for the legacy local-rotation input.
 
 Common coordinate rules:
 
@@ -237,24 +248,29 @@ Common coordinate rules:
 - `smooth_root_2d` is `[x, z]` relative to the canonical origin; frame 0 is
   usually near `[0.0, 0.0]`.
 - `root_positions` is `[x, y, z]`, where `y` is the root/hips height.
+- `global_joints_positions` uses the same Kimodo world frame as `posed_joints`
+  output: meters, Y-up.
 - `global_root_heading` is not radians; it is `[cos(theta), sin(theta)]`.
+- `output_world_offset` only offsets exported artifacts. It is not applied to
+  input constraints.
 
 ### Constraint Set Overview
 
 | `type` | Required fields | Optional fields | Description |
 | --- | --- | --- | --- |
 | `root2d` | `frame_indices`, `smooth_root_2d` | `global_root_heading` | Constrains smoothed root path or waypoints on the XZ ground plane. |
-| `fullbody` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Constrains full-body joint positions through complete pose keyframes. |
-| `left-hand` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Shorthand for `end-effector`; constrains left-hand related end-effectors and root/hips. |
-| `right-hand` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Shorthand for `end-effector`; constrains right-hand related end-effectors and root/hips. |
-| `left-foot` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Shorthand for `end-effector`; constrains left-foot related end-effectors and root/hips. |
-| `right-foot` | `frame_indices`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | Shorthand for `end-effector`; constrains right-foot related end-effectors and root/hips. |
-| `end-effector` | `frame_indices`, `joint_names`, `root_positions`, `local_joints_rot` | `smooth_root_2d` | General end-effector constraint; can specify multiple semantic end-effector groups. |
+| `fullbody` | `frame_indices` plus one pose input form | `smooth_root_2d` | Constrains full-body joint positions through complete pose keyframes or direct world-space positions. |
+| `left-hand` | `frame_indices` plus one pose input form | `smooth_root_2d` | Shorthand for `end-effector`; constrains left-hand related end-effectors and root/hips. |
+| `right-hand` | `frame_indices` plus one pose input form | `smooth_root_2d` | Shorthand for `end-effector`; constrains right-hand related end-effectors and root/hips. |
+| `left-foot` | `frame_indices` plus one pose input form | `smooth_root_2d` | Shorthand for `end-effector`; constrains left-foot related end-effectors and root/hips. |
+| `right-foot` | `frame_indices` plus one pose input form | `smooth_root_2d` | Shorthand for `end-effector`; constrains right-foot related end-effectors and root/hips. |
+| `end-effector` | `frame_indices`, `joint_names` plus one pose input form | `smooth_root_2d` | General end-effector constraint; can specify multiple semantic end-effector groups. |
 
-Except for `root2d`, pose-based constraint sets require `root_positions` and a
-complete skeleton `local_joints_rot`. They do not accept direct XYZ targets for
-one hand or foot. Kimodo first runs FK from the complete pose, then extracts the
-full-body or end-effector targets used by the selected set type.
+Except for `root2d`, pose-based constraint sets still describe a complete pose
+for the current model skeleton. The selected set type then decides which targets
+are used: `fullbody` uses all joint positions, while end-effector types extract
+the configured hand/foot/root targets. For world-space input, submit the full
+`global_joints_positions` array rather than only one hand or foot XYZ.
 
 ### `root2d`
 
@@ -301,13 +317,15 @@ Required fields:
 
 - `type`: `"fullbody"`
 - `frame_indices`: `[T]`
-- `root_positions`: `[T, 3]`, each item is `[x, y, z]`
-- `local_joints_rot`: `[T, J, 3]`, axis-angle radians
+- one pose input form:
+  - `root_positions`: `[T, 3]` plus `local_joints_rot`: `[T, J, 3]`
+  - or `global_joints_positions`: `[T, J, 3]`
 
 Optional fields:
 
 - `smooth_root_2d`: `[T, 2]`, each item is `[x, z]`. If omitted, the runtime
-  uses the XZ components from `root_positions`.
+  uses the XZ components from the root joint.
+- `global_joints_rots`: `[T, J, 3, 3]`, only with `global_joints_positions`.
 
 ```json
 {
@@ -319,6 +337,23 @@ Optional fields:
     [
       [0.0, 0.0, 0.0],
       [0.02, 0.0, 0.0],
+      "... repeat until J joints ..."
+    ]
+  ]
+}
+```
+
+World-space positions-only example:
+
+```json
+{
+  "type": "fullbody",
+  "frame_indices": [60],
+  "smooth_root_2d": [[0.5, 2.0]],
+  "global_joints_positions": [
+    [
+      [0.5, 0.95, 2.0],
+      [0.5, 1.05, 2.0],
       "... repeat until J joints ..."
     ]
   ]
@@ -348,13 +383,15 @@ Required fields:
 
 - `type`: `"left-hand"`, `"right-hand"`, `"left-foot"`, or `"right-foot"`
 - `frame_indices`: `[T]`
-- `root_positions`: `[T, 3]`
-- `local_joints_rot`: `[T, J, 3]`
+- one pose input form:
+  - `root_positions`: `[T, 3]` plus `local_joints_rot`: `[T, J, 3]`
+  - or `global_joints_positions`: `[T, J, 3]`
 
 Optional fields:
 
 - `smooth_root_2d`: `[T, 2]`. If omitted, the runtime uses the XZ components
-  from `root_positions`.
+  from the root joint.
+- `global_joints_rots`: `[T, J, 3, 3]`, only with `global_joints_positions`.
 
 ```json
 {
@@ -407,13 +444,21 @@ Required fields:
 - `type`: `"end-effector"`
 - `joint_names`: `list[str]`
 - `frame_indices`: `[T]`
-- `root_positions`: `[T, 3]`
-- `local_joints_rot`: `[T, J, 3]`
+- one pose input form:
+  - `root_positions`: `[T, 3]` plus `local_joints_rot`: `[T, J, 3]`
+  - or `global_joints_positions`: `[T, J, 3]`
 
 Optional fields:
 
 - `smooth_root_2d`: `[T, 2]`. If omitted, the runtime uses the XZ components
-  from `root_positions`.
+  from the root joint.
+- `global_joints_rots`: `[T, J, 3, 3]`, only with `global_joints_positions`.
+
+If `global_joints_positions` is provided without `global_joints_rots`, the
+constraint is positions-only. It constrains denoising position features and root
+information, but does not provide rotation targets to motion post-processing.
+Use legacy input or add `global_joints_rots` when post-processing should pin
+full-body/limb orientation targets.
 
 ```json
 {

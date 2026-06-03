@@ -23,6 +23,9 @@ _PATH_COMPONENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 Vector2 = tuple[float, float]
 Vector3 = tuple[float, float, float]
 AxisAnglePose = list[list[Vector3]]
+Matrix3 = tuple[Vector3, Vector3, Vector3]
+GlobalPositionPose = list[list[Vector3]]
+GlobalRotationPose = list[list[Matrix3]]
 EndEffectorName = Literal["LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"]
 
 
@@ -54,20 +57,53 @@ class Root2DConstraintRequest(ConstraintRequestBase):
 
 
 class PoseConstraintRequestBase(ConstraintRequestBase):
-    root_positions: list[Vector3]
-    local_joints_rot: AxisAnglePose
+    root_positions: list[Vector3] | None = None
+    local_joints_rot: AxisAnglePose | None = None
+    global_joints_positions: GlobalPositionPose | None = None
+    global_joints_rots: GlobalRotationPose | None = None
     smooth_root_2d: list[Vector2] | None = None
 
     @model_validator(mode="after")
     def _validate_pose_lengths(self) -> "PoseConstraintRequestBase":
-        _validate_count("root_positions", self.root_positions, self.frame_indices)
-        _validate_count("local_joints_rot", self.local_joints_rot, self.frame_indices)
         if self.smooth_root_2d is not None:
             _validate_count("smooth_root_2d", self.smooth_root_2d, self.frame_indices)
-        for frame_pose in self.local_joints_rot:
-            if not frame_pose:
-                raise ValueError("local_joints_rot must include at least one joint per constrained frame.")
-        return self
+
+        has_legacy_root = self.root_positions is not None
+        has_legacy_rot = self.local_joints_rot is not None
+        has_world_pos = self.global_joints_positions is not None
+        has_world_rot = self.global_joints_rots is not None
+
+        if has_world_pos and (has_legacy_root or has_legacy_rot):
+            raise ValueError(
+                "Pose constraints must use either root_positions + local_joints_rot or "
+                "global_joints_positions, not both."
+            )
+        if has_world_rot and not has_world_pos:
+            raise ValueError("global_joints_rots requires global_joints_positions.")
+
+        if has_world_pos:
+            _validate_count("global_joints_positions", self.global_joints_positions, self.frame_indices)
+            for frame_pose in self.global_joints_positions:
+                if not frame_pose:
+                    raise ValueError("global_joints_positions must include at least one joint per constrained frame.")
+            if self.global_joints_rots is not None:
+                _validate_count("global_joints_rots", self.global_joints_rots, self.frame_indices)
+                for frame_positions, frame_rots in zip(self.global_joints_positions, self.global_joints_rots):
+                    if len(frame_positions) != len(frame_rots):
+                        raise ValueError("global_joints_rots must have the same joint count as global_joints_positions.")
+            return self
+
+        if has_legacy_root != has_legacy_rot:
+            raise ValueError("root_positions and local_joints_rot must be provided together.")
+        if has_legacy_root and self.root_positions is not None and self.local_joints_rot is not None:
+            _validate_count("root_positions", self.root_positions, self.frame_indices)
+            _validate_count("local_joints_rot", self.local_joints_rot, self.frame_indices)
+            for frame_pose in self.local_joints_rot:
+                if not frame_pose:
+                    raise ValueError("local_joints_rot must include at least one joint per constrained frame.")
+            return self
+
+        raise ValueError("Pose constraints require root_positions + local_joints_rot or global_joints_positions.")
 
 
 class FullBodyConstraintRequest(PoseConstraintRequestBase):
@@ -155,7 +191,7 @@ class GenerationRequestBody(BaseModel):
         return self
 
     def to_generation_request(self) -> GenerationRequest:
-        return GenerationRequest(**self.model_dump(mode="json"))
+        return GenerationRequest(**self.model_dump(mode="json", exclude_none=True))
 
 
 class ArtifactResponse(BaseModel):

@@ -77,27 +77,28 @@ def _validate_rotation_matrix(
     prim_index: int,
     joint_name: str,
     *,
+    rotation_label: str = "local rotation",
     tolerance: float = 0.001,
 ) -> None:
     for row_index in range(3):
         length = math.sqrt(sum(matrix[row_index][col] * matrix[row_index][col] for col in range(3)))
         if abs(length - 1.0) > tolerance:
             raise PoseConstraintParseError(
-                f"{constraint_type} packed primitive {prim_index} joint {joint_name!r} local rotation "
+                f"{constraint_type} packed primitive {prim_index} joint {joint_name!r} {rotation_label} "
                 "contains scale or shear."
             )
         for other_index in range(row_index + 1, 3):
             dot = sum(matrix[row_index][col] * matrix[other_index][col] for col in range(3))
             if abs(dot) > tolerance:
                 raise PoseConstraintParseError(
-                    f"{constraint_type} packed primitive {prim_index} joint {joint_name!r} local rotation "
+                    f"{constraint_type} packed primitive {prim_index} joint {joint_name!r} {rotation_label} "
                     "contains scale or shear."
                 )
 
     determinant = _matrix3_determinant(matrix)
     if abs(determinant - 1.0) > tolerance:
         raise PoseConstraintParseError(
-            f"{constraint_type} packed primitive {prim_index} joint {joint_name!r} local rotation "
+            f"{constraint_type} packed primitive {prim_index} joint {joint_name!r} {rotation_label} "
             "must have determinant 1."
         )
 

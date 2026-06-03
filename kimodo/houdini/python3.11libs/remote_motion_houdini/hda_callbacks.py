@@ -13,6 +13,9 @@ from remote_motion_client import RemoteMotionClient
 from .cache import default_download_dir
 from .config import get_server_url
 from .constraints import (
+    _G1_ORDER,
+    _SMPLX22_ORDER,
+    _SOMA30_ORDER,
     DEFAULT_ROOT2D_CONSTRAINT_NODE,
     POSE_CONSTRAINT_NODES,
     pose_constraints_from_geometry,
@@ -71,7 +74,7 @@ def generate_motion(kwargs: dict[str, Any]) -> Path:
     output_world_offset = _output_world_offset(node)
     if _is_nonzero_vector(output_world_offset):
         payload["output_world_offset"] = list(output_world_offset)
-    _apply_constraints(node, payload, output_world_offset)
+    _apply_constraints(node, payload, output_world_offset, model)
 
     client = RemoteMotionClient(server_url)
     submitted = client.submit(payload)
@@ -151,12 +154,14 @@ def _apply_constraints(
     node,
     payload: dict[str, Any],
     output_world_offset: tuple[float, float, float],
+    model: str | None = None,
 ) -> None:
     if not _eval_bool_parm(node, "enable_constraints", False):
         return
 
     constraints: list[dict[str, Any]] = []
     warnings: list[str] = []
+    pose_skeleton_order = _pose_skeleton_order_for_model(model)
 
     geometry = _constraint_source_geometry(node, DEFAULT_ROOT2D_CONSTRAINT_NODE)
     if geometry is not None:
@@ -181,6 +186,7 @@ def _apply_constraints(
             constraint_type,
             frame_origin=float(_eval_parm(node, "frame_origin", 1)),
             output_world_offset=output_world_offset,
+            skeleton_order=pose_skeleton_order,
         )
         constraints.extend(pose_constraints)
         warnings.extend(pose_warnings)
@@ -188,6 +194,28 @@ def _apply_constraints(
     if constraints:
         payload["constraints"] = constraints
     _display_houdini_warnings(warnings)
+
+
+def _pose_skeleton_order_for_model(model: str | None) -> tuple[str, ...] | None:
+    try:
+        from kimodo.model.registry import DEFAULT_MODEL, get_model_info, resolve_model_name
+    except Exception:
+        return None
+
+    try:
+        short_key = resolve_model_name(model or DEFAULT_MODEL, default_family="Kimodo")
+        info = get_model_info(short_key)
+    except Exception:
+        return None
+
+    skeleton = info.skeleton.upper() if info is not None else ""
+    if skeleton == "SOMA":
+        return _SOMA30_ORDER
+    if skeleton == "G1":
+        return _G1_ORDER
+    if skeleton == "SMPLX":
+        return _SMPLX22_ORDER
+    return None
 
 
 def _constraint_source_geometry(node, source_name: str):

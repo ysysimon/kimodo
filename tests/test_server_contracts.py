@@ -125,6 +125,182 @@ def test_load_constraints_accepts_backend_supported_pose_constraint_types():
     ]
 
 
+def test_load_constraints_accepts_world_space_pose_constraints_without_fk(monkeypatch):
+    from kimodo.constraints import load_constraints_lst
+    from kimodo.skeleton import SOMASkeleton30
+
+    skeleton = SOMASkeleton30()
+
+    def fail_fk(*args, **kwargs):
+        raise AssertionError("world-space constraints should not run FK")
+
+    monkeypatch.setattr(skeleton, "fk", fail_fk)
+    pose_fields = _world_pose_fields(skeleton.nbjoints)
+    loaded = load_constraints_lst(
+        [
+            {"type": "fullbody", **pose_fields},
+            {"type": "end-effector", **pose_fields, "joint_names": ["RightFoot", "LeftHand"]},
+            {"type": "left-hand", **pose_fields},
+            {"type": "right-hand", **pose_fields},
+            {"type": "left-foot", **pose_fields},
+            {"type": "right-foot", **pose_fields},
+        ],
+        skeleton,
+    )
+
+    assert [constraint.name for constraint in loaded] == [
+        "fullbody",
+        "end-effector",
+        "left-hand",
+        "right-hand",
+        "left-foot",
+        "right-foot",
+    ]
+    assert all(not constraint.has_rotation_targets for constraint in loaded)
+    assert all(constraint.input_format == "world" for constraint in loaded)
+    assert "global_joints_positions" in loaded[0].get_save_info()
+    assert "local_joints_rot" not in loaded[0].get_save_info()
+
+
+def test_load_constraints_rejects_world_space_joint_count_mismatch():
+    from kimodo.constraints import load_constraints_lst
+    from kimodo.skeleton import SOMASkeleton30
+
+    skeleton = SOMASkeleton30()
+    payload = {"type": "fullbody", **_world_pose_fields(skeleton.nbjoints - 1)}
+
+    with pytest.raises(ValueError, match="joint count"):
+        load_constraints_lst([payload], skeleton)
+
+
+def test_end_effector_positions_only_conditioning_omits_rotation_features():
+    from kimodo.constraints import EndEffectorConstraintSet
+    from kimodo.motion_rep.conditioning import build_condition_dicts
+    from kimodo.skeleton import SOMASkeleton30
+
+    skeleton = SOMASkeleton30()
+    frame_indices = torch.tensor([0])
+    positions = torch.zeros(1, skeleton.nbjoints, 3)
+    rotations = torch.eye(3).expand(1, skeleton.nbjoints, 3, 3).clone()
+
+    positions_only = EndEffectorConstraintSet(
+        skeleton,
+        frame_indices,
+        positions,
+        None,
+        joint_names=["LeftHand"],
+        input_format="world",
+    )
+    _, positions_only_data = build_condition_dicts([positions_only])
+
+    assert "global_joints_positions" in positions_only_data
+    assert "global_joints_rots" not in positions_only_data
+
+    with_rotations = EndEffectorConstraintSet(
+        skeleton,
+        frame_indices,
+        positions,
+        rotations,
+        joint_names=["LeftHand"],
+        input_format="world",
+    )
+    _, with_rotations_data = build_condition_dicts([with_rotations])
+
+    assert "global_joints_positions" in with_rotations_data
+    assert "global_joints_rots" in with_rotations_data
+
+
+def test_positions_only_constraints_do_not_write_postprocess_rotation_targets():
+    from kimodo.constraints import FullBodyConstraintSet
+    from kimodo.postprocess import extract_input_motion_from_constraints
+    from kimodo.skeleton import SOMASkeleton30
+
+    skeleton = SOMASkeleton30()
+    frame_indices = torch.tensor([0])
+    positions = torch.zeros(1, skeleton.nbjoints, 3)
+    positions[:, skeleton.root_idx] = torch.tensor([1.0, 0.95, 2.0])
+    constraint = FullBodyConstraintSet(
+        skeleton,
+        frame_indices,
+        positions,
+        None,
+        input_format="world",
+    )
+
+    hip_translations, rotations = extract_input_motion_from_constraints(
+        [constraint],
+        skeleton,
+        num_frames=1,
+        num_joints=skeleton.nbjoints,
+    )
+
+    expected_identity = torch.zeros(skeleton.nbjoints, 4)
+    expected_identity[:, 0] = 1.0
+    assert torch.allclose(hip_translations[0], torch.tensor([1.0, 0.95, 2.0]))
+    assert torch.equal(rotations[0], expected_identity)
+
+
+def test_positions_only_postprocess_uses_root_mask_not_fullbody_mask(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from kimodo.constraints import FullBodyConstraintSet
+    from kimodo.postprocess import post_process_motion
+    from kimodo.skeleton import SOMASkeleton30
+
+    captured = {}
+
+    def fake_correct_motion(
+        hip_translations_corrected,
+        rotations_corrected,
+        contacts,
+        hip_translations_input,
+        rotations_input,
+        masks_b,
+        contact_threshold,
+        root_margin,
+        working_rig,
+        has_double_ankle_joints,
+    ):
+        captured["masks"] = {key: value.clone() for key, value in masks_b.items()}
+        captured["rotations_input"] = rotations_input.clone()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "motion_correction",
+        SimpleNamespace(motion_postprocess=SimpleNamespace(correct_motion=fake_correct_motion)),
+    )
+
+    skeleton = SOMASkeleton30()
+    frame_indices = torch.tensor([0])
+    positions = torch.zeros(1, skeleton.nbjoints, 3)
+    positions[:, skeleton.root_idx] = torch.tensor([1.0, 0.95, 2.0])
+    constraint = FullBodyConstraintSet(
+        skeleton,
+        frame_indices,
+        positions,
+        None,
+        input_format="world",
+    )
+    local_rot_mats = torch.eye(3).reshape(1, 1, 1, 3, 3).expand(1, 1, skeleton.nbjoints, 3, 3).clone()
+    root_positions = torch.zeros(1, 1, 3)
+    contacts = torch.zeros(1, 1, 4)
+
+    post_process_motion(
+        local_rot_mats,
+        root_positions,
+        contacts,
+        skeleton,
+        constraint_lst=[constraint],
+    )
+
+    expected_identity = torch.zeros(1, 1, skeleton.nbjoints, 4)
+    expected_identity[..., 0] = 1.0
+    assert captured["masks"]["Root"].tolist() == [1.0]
+    assert captured["masks"]["FullBody"].tolist() == [0.0]
+    assert torch.equal(captured["rotations_input"], expected_identity)
+
+
 def test_create_pairs_moves_second_index_tensor_to_first_tensor_device():
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required to exercise mixed CPU/CUDA index tensors.")
@@ -343,3 +519,15 @@ def _multi_type_constraints_payload() -> list[dict]:
         {"type": "end-effector", **pose_fields, "joint_names": ["RightFoot", "LeftHand"]},
         {"type": "left-hand", **pose_fields},
     ]
+
+
+def _world_pose_fields(n_joints: int) -> dict:
+    positions = [[[0.0, 0.0, 0.0] for _index in range(n_joints)]]
+    if n_joints > 1:
+        positions[0][0] = [0.0, 0.95, 0.0]
+        positions[0][1] = [-0.1, 0.9, 0.0]
+    return {
+        "frame_indices": [0],
+        "global_joints_positions": positions,
+        "smooth_root_2d": [[0.0, 0.0]],
+    }
