@@ -245,6 +245,8 @@ def test_model_runtime_generate_disables_g1_postprocess(monkeypatch, tmp_path):
     ("generation_request", "message"),
     [
         (GenerationRequest(texts=["walk"], durations=[1.0, 2.0]), "texts and durations"),
+        (GenerationRequest(texts=["walk"], durations=[0.0]), "greater than 0"),
+        (GenerationRequest(texts=["walk"], durations=[10.1]), "at most 10 seconds"),
         (GenerationRequest(texts=["walk"], durations=[1.0], num_transition_frames=0), "num_transition_frames"),
         (
             GenerationRequest(texts=["walk"], durations=[1.0], num_samples=2, first_heading_angle=[0.1, 0.2, 0.3]),

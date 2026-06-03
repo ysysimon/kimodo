@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Lock
 
-from ..schemas import GenerationRequest, GenerationResult
+from ..schemas import MAX_DURATION_SECONDS_PER_PROMPT, GenerationRequest, GenerationResult
 from .text_encoder import TextEncoderServerConfig, TextEncoderService
 
 
@@ -96,6 +96,13 @@ class ModelRuntime:
 
         if len(request.texts) != len(request.durations):
             raise ValueError("texts and durations must have the same length.")
+        for duration in request.durations:
+            if duration <= 0:
+                raise ValueError("durations must be greater than 0 seconds.")
+            if duration > MAX_DURATION_SECONDS_PER_PROMPT:
+                raise ValueError(
+                    f"Each prompt duration must be at most {MAX_DURATION_SECONDS_PER_PROMPT:g} seconds."
+                )
         if request.num_transition_frames < 1:
             raise ValueError("num_transition_frames must be at least 1.")
         if isinstance(request.first_heading_angle, list) and len(request.first_heading_angle) not in (

@@ -19,6 +19,7 @@ _BVH_FILE_PARM = "bvhfile"
 _SCALE_PARM = "scale"
 _DEFAULT_IMPORT_SCALE = 0.01
 _DEFAULT_DURATION = 5.0
+_MAX_DURATION = 10.0
 _SERVER_DEFAULT_MODEL_LABEL = "Server default"
 _RELOAD_PARMS = ("reload", "reloadfile")
 _MOCAP_IMPORT_NODE_TYPES = ("mocapimport", "mocapimport::2.0", "kinefx::mocapimport", "kinefx::mocapimport::2.0")
@@ -131,6 +132,7 @@ def configure_server() -> None:
 
 
 def _generation_payload(prompt: str, *, duration: float, seed: int | None, model: str | None) -> dict[str, Any]:
+    _validate_duration(duration)
     payload: dict[str, Any] = {
         "texts": [prompt],
         "durations": [duration],
@@ -192,11 +194,11 @@ class _GenerationSettingsDialog:
                 horizontal = getattr(getattr(qt_core.Qt, "Orientation", qt_core.Qt), "Horizontal")
 
                 self.duration_slider = qt_widgets.QSlider(horizontal, self)
-                self.duration_slider.setRange(1, 600)
+                self.duration_slider.setRange(1, int(_MAX_DURATION * 10))
                 self.duration_slider.setValue(int(_DEFAULT_DURATION * 10))
 
                 self.duration_spin = qt_widgets.QDoubleSpinBox(self)
-                self.duration_spin.setRange(0.1, 60.0)
+                self.duration_spin.setRange(0.1, _MAX_DURATION)
                 self.duration_spin.setDecimals(1)
                 self.duration_spin.setSingleStep(0.1)
                 self.duration_spin.setSuffix(" s")
@@ -262,6 +264,13 @@ def _row(qt_widgets, *widgets):
     for widget in widgets:
         layout.addWidget(widget)
     return row
+
+
+def _validate_duration(duration: float) -> None:
+    if duration <= 0:
+        raise ValueError("Duration must be greater than 0 seconds.")
+    if duration > _MAX_DURATION:
+        raise ValueError(f"Duration must be at most {_MAX_DURATION:g} seconds per prompt.")
 
 
 def _available_model_names() -> list[str]:

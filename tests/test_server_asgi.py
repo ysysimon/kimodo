@@ -69,6 +69,22 @@ def test_submit_rejects_client_job_id(tmp_path):
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("durations", [[0.0], [10.1], [1.0, 2.0]])
+def test_submit_rejects_invalid_duration_segments(tmp_path, durations):
+    app = create_fastapi_app(storage_root=str(tmp_path), runtime=FakeRuntime())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/jobs",
+            json={
+                "texts": ["A person walks forward."],
+                "durations": durations,
+            },
+        )
+
+    assert response.status_code == 422
+
+
 def test_submit_accepts_bvh_standard_tpose(tmp_path):
     runtime = CapturingRuntime()
     app = create_fastapi_app(storage_root=str(tmp_path), runtime=runtime)

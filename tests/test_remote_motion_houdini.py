@@ -42,6 +42,52 @@ def test_hda_callbacks_model_menu_and_on_created(monkeypatch):
     assert node.parm("model").value == DEFAULT_MODEL
 
 
+def test_hda_callbacks_prints_warnings_without_houdini_ui(monkeypatch, capsys):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    callbacks = importlib.import_module("remote_motion_houdini.hda_callbacks")
+
+    class FailingUi:
+        def displayMessage(self, message: str, **kwargs) -> None:
+            raise AssertionError("displayMessage should not be called in headless mode")
+
+    class HeadlessHou:
+        ui = FailingUi()
+        severityType = FakeSeverityType
+
+        def isUIAvailable(self) -> bool:
+            return False
+
+    monkeypatch.setitem(sys.modules, "hou", HeadlessHou())
+
+    callbacks._display_houdini_warnings(["headless constraint warning"])
+
+    assert "headless constraint warning" in capsys.readouterr().out
+
+
+def test_hda_callbacks_prints_warnings_when_display_message_fails(monkeypatch, capsys):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    callbacks = importlib.import_module("remote_motion_houdini.hda_callbacks")
+
+    class FailingUi:
+        def displayMessage(self, message: str, **kwargs) -> None:
+            raise RuntimeError("no display")
+
+    class GuiHou:
+        ui = FailingUi()
+        severityType = FakeSeverityType
+
+        def isUIAvailable(self) -> bool:
+            return True
+
+    monkeypatch.setitem(sys.modules, "hou", GuiHou())
+
+    callbacks._display_houdini_warnings(["fallback constraint warning"])
+
+    assert "fallback constraint warning" in capsys.readouterr().out
+
+
 def test_root2d_constraint_parser_projects_positions_sorts_frames_and_reads_heading(monkeypatch):
     plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
     monkeypatch.syspath_prepend(str(plugin_libs))
@@ -936,6 +982,19 @@ def test_shelf_generate_and_download_includes_optional_settings(monkeypatch, tmp
         "seed": 123,
         "model": "kimodo-g1-rp",
     }
+
+
+def test_shelf_generation_rejects_duration_over_model_limit(monkeypatch):
+    plugin_libs = Path(__file__).parents[1] / "kimodo" / "houdini" / "python3.11libs"
+    monkeypatch.syspath_prepend(str(plugin_libs))
+    shelf_tools = importlib.import_module("remote_motion_houdini.shelf_tools")
+
+    try:
+        shelf_tools.submit_generation("walk forward", duration=10.1)
+    except ValueError as exc:
+        assert "at most 10 seconds" in str(exc)
+    else:
+        raise AssertionError("Expected duration over 10 seconds to raise ValueError")
 
 
 def test_shelf_prompt_submit_generation_uses_dialog_settings(monkeypatch, tmp_path):

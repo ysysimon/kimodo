@@ -20,6 +20,8 @@ from .constraints import (
 )
 from .importer import format_houdini_path, refresh_mocap_import
 
+_MAX_DURATION = 10.0
+
 
 def model_menu(kwargs: dict[str, Any] | None = None) -> list[str]:
     """Return model menu items as Houdini token/label pairs."""
@@ -102,11 +104,11 @@ def _eval_prompt_segments(node) -> tuple[list[str], list[float]]:
             if not prompt:
                 continue
             texts.append(prompt)
-            durations.append(float(_eval_parm(node, f"duration{index}", 5.0)))
+            durations.append(_validated_duration(_eval_parm(node, f"duration{index}", 5.0)))
         if texts:
             return texts, durations
 
-    return [str(_eval_parm(node, "prompt", "")).strip()], [float(_eval_parm(node, "duration", 5.0))]
+    return [str(_eval_parm(node, "prompt", "")).strip()], [_validated_duration(_eval_parm(node, "duration", 5.0))]
 
 
 def _indexed_parm_names(node, base_name: str) -> set[int]:
@@ -212,20 +214,35 @@ def _constraint_source_node(node, source_name: str):
 def _display_houdini_warnings(warnings: list[str]) -> None:
     if not warnings:
         return
+    message = "\n".join(warnings)
     try:
         import hou  # type: ignore
     except ImportError:
+        _print_warnings(message)
+        return
+
+    is_ui_available = getattr(hou, "isUIAvailable", None)
+    if callable(is_ui_available) and not is_ui_available():
+        _print_warnings(message)
         return
 
     ui = getattr(hou, "ui", None)
     display_message = getattr(ui, "displayMessage", None)
     if not callable(display_message):
+        _print_warnings(message)
         return
 
     severity_type = getattr(hou, "severityType", None)
     warning = getattr(severity_type, "Warning", None) if severity_type is not None else None
     kwargs = {"severity": warning} if warning is not None else {}
-    display_message("\n".join(warnings), **kwargs)
+    try:
+        display_message(message, **kwargs)
+    except Exception:
+        _print_warnings(message)
+
+
+def _print_warnings(message: str) -> None:
+    print(message)
 
 
 def _eval_parm(node, parm_name: str, default: Any = None) -> Any:
@@ -233,6 +250,15 @@ def _eval_parm(node, parm_name: str, default: Any = None) -> Any:
     if parm is None:
         return default
     return parm.eval()
+
+
+def _validated_duration(value: Any) -> float:
+    duration = float(value)
+    if duration <= 0:
+        raise ValueError("Duration must be greater than 0 seconds.")
+    if duration > _MAX_DURATION:
+        raise ValueError(f"Duration must be at most {_MAX_DURATION:g} seconds per prompt.")
+    return duration
 
 
 def _eval_bool_parm(node, parm_name: str, default: bool) -> bool:

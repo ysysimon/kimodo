@@ -16,7 +16,7 @@ from kimodo.model.registry import DEFAULT_MODEL
 
 from .app import create_app
 from .runtime import Runtime, TextEncoderServerConfig
-from .schemas import ArtifactRecord, GenerationRequest, JobRecord, JobStatus
+from .schemas import MAX_DURATION_SECONDS_PER_PROMPT, ArtifactRecord, GenerationRequest, JobRecord, JobStatus
 
 _PATH_COMPONENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -140,6 +140,19 @@ class GenerationRequestBody(BaseModel):
     root_margin: float = 0.04
     constraints: str | list[ConstraintRequestBody] | None = None
     output_world_offset: Vector3 | None = None
+
+    @model_validator(mode="after")
+    def _validate_prompt_segments(self) -> "GenerationRequestBody":
+        if len(self.texts) != len(self.durations):
+            raise ValueError("texts and durations must have the same length.")
+        for duration in self.durations:
+            if duration <= 0:
+                raise ValueError("durations must be greater than 0 seconds.")
+            if duration > MAX_DURATION_SECONDS_PER_PROMPT:
+                raise ValueError(
+                    f"Each prompt duration must be at most {MAX_DURATION_SECONDS_PER_PROMPT:g} seconds."
+                )
+        return self
 
     def to_generation_request(self) -> GenerationRequest:
         return GenerationRequest(**self.model_dump(mode="json"))

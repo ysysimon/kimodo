@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from kimodo.model.registry import DEFAULT_MODEL
 
+MAX_DURATION_SECONDS_PER_PROMPT = 10.0
+
 
 class JobStatus(str, Enum):
     QUEUED = "queued"
